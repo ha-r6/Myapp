@@ -26,10 +26,21 @@ struct LensStickerGridView: View {
         LensColorCategory.allCases
     }
 
-    private let columns = [
-        GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 14),
-        GridItem(.flexible(minimum: 0, maximum: .infinity), spacing: 14),
-    ]
+    private let horizontalPadding: CGFloat = 16
+    private let cardSpacing: CGFloat = 12
+
+    private var cardWidth: CGFloat {
+        let screenWidth = UIScreen.main.bounds.width
+        let available = screenWidth - (horizontalPadding * 2) - cardSpacing
+        return floor(available / 2)
+    }
+
+    private var columns: [GridItem] {
+        [
+            GridItem(.fixed(cardWidth), spacing: cardSpacing, alignment: .top),
+            GridItem(.fixed(cardWidth), spacing: cardSpacing, alignment: .top),
+        ]
+    }
 
     var body: some View {
         let filtered = filteredLenses()
@@ -98,12 +109,13 @@ struct LensStickerGridView: View {
                 .appCard()
                 .padding(.horizontal, 16)
 
-                LazyVGrid(columns: columns, spacing: 14) {
+                LazyVGrid(columns: columns, spacing: cardSpacing) {
                     ForEach(filtered) { lens in
                         NavigationLink {
                             LensDetailView(lensId: lens.id)
                         } label: {
                             LensStickerCard(lens: lens)
+                                .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
@@ -117,7 +129,7 @@ struct LensStickerGridView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, horizontalPadding)
                 .padding(.bottom, 24)
             }
         }
@@ -387,6 +399,7 @@ struct StickerBackgroundView: View {
 
 struct LensStickerCard: View {
     let lens: Lens
+    private let cardHeight: CGFloat = 294
 
     @AppStorage(LensCardSettingsKeys.enabledFields) private var enabledFieldsRaw = LensCardDisplaySettings.serialize(LensCardDisplaySettings.defaultEnabled)
 
@@ -396,10 +409,10 @@ struct LensStickerCard: View {
 
     var body: some View {
         let enabled = LensCardDisplaySettings.enabledFields(from: enabledFieldsRaw)
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             EyeStickerImage(data: lens.stickerEyeJPEG, tint: accent)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 if enabled.contains(.brand) {
                     Text(lens.brand.isEmpty ? "（ブランド未設定）" : lens.brand)
                         .font(.caption.weight(.semibold))
@@ -414,6 +427,8 @@ struct LensStickerCard: View {
                                 .font(.headline)
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
+                                .truncationMode(.tail)
+                                .minimumScaleFactor(0.8)
                                 .layoutPriority(2)
                         }
                         if lens.colorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
@@ -421,17 +436,18 @@ struct LensStickerCard: View {
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .layoutPriority(1)
+                                .truncationMode(.tail)
+                                .layoutPriority(0)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .clipped()
                 }
 
                 // 着色直径はピル表示へ
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 if enabled.contains(.graphicDiameter), let gd = lens.graphicDiameter {
                     HStack(spacing: 8) {
                         StickerPill(text: "着色直径 \(String(format: "%.1f", gd))mm", color: accent)
@@ -452,61 +468,53 @@ struct LensStickerCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .frame(height: 294, alignment: .topLeading)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(height: cardHeight, alignment: .topLeading)
+        .clipped()
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(AppTheme.surface)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(StickerOutlineShape(cornerRadius: 22).stroke(Color.black.opacity(0.10), lineWidth: 1))
-        .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 7)
+        .shadow(color: .black.opacity(0.01), radius: 1, x: 0, y: 1)
     }
 }
 
 private struct EyeStickerImage: View {
     let data: Data?
     let tint: Color
+    private let imageAreaHeight: CGFloat = 126
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(tint.opacity(0.10))
+                .fill(data == nil ? tint.opacity(0.10) : .clear)
 
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.white)
-                .padding(6)
-
-            if let data, let image = UIImage(data: data), let stickerImage = normalizedImage(from: image) {
-                Image(uiImage: stickerImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, minHeight: 132, maxHeight: 132, alignment: .center)
-                    .clipShape(Ellipse())
-                    .padding(10)
-            } else {
-                VStack(spacing: 6) {
-                    Image(systemName: "camera.macro")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(tint)
-                    Text("目の写真がありません")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            Group {
+                if let data, let image = UIImage(data: data), let stickerImage = normalizedImage(from: image) {
+                    Image(uiImage: stickerImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, minHeight: imageAreaHeight - 14, maxHeight: imageAreaHeight - 14, alignment: .center)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                } else {
+                    VStack(spacing: 6) {
+                        Image(systemName: "camera.macro")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(tint)
+                        Text("目の写真がありません")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: imageAreaHeight - 14, maxHeight: imageAreaHeight - 14, alignment: .center)
                 }
-                .frame(maxWidth: .infinity, minHeight: 132, maxHeight: 132, alignment: .center)
             }
-
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.65), Color.white.opacity(0.0)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .blendMode(.softLight)
-                .opacity(0.7)
+            .padding(8)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 148)
+        .frame(height: imageAreaHeight)
+        .clipped()
         .overlay(StickerOutlineShape(cornerRadius: 18).stroke(Color.black.opacity(0.10), lineWidth: 1))
     }
 

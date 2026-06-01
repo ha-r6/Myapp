@@ -3,6 +3,7 @@ import PhotosUI
 import UIKit
 import AVFoundation
 import Combine
+import ImageIO
 
 struct LensFormView: View {
     @Environment(\.dismiss) private var dismiss
@@ -13,8 +14,6 @@ struct LensFormView: View {
     @AppStorage(AppSettingsKeys.fixedPowerValue) private var fixedPowerValue = ""
     @AppStorage(AppSettingsKeys.fixedLeftPowerValue) private var fixedLeftPowerValue = ""
     @AppStorage(AppSettingsKeys.fixedRightPowerValue) private var fixedRightPowerValue = ""
-    @AppStorage(AppSettingsKeys.preferredEyeSide) private var preferredEyeSideRaw = EyeSide.right.rawValue
-    @AppStorage(AppSettingsKeys.autoCropEyeEnabled) private var autoCropEyeEnabled = true
     @AppStorage(AppSettingsKeys.recentPurchasePlaces) private var recentPurchasePlacesRaw = ""
     @AppStorage(AppSettingsKeys.lastLeftPower) private var lastLeftPowerRaw = ""
     @AppStorage(AppSettingsKeys.lastRightPower) private var lastRightPowerRaw = ""
@@ -48,6 +47,9 @@ struct LensFormView: View {
     @State private var stickerPickerItem: PhotosPickerItem?
     @State private var stickerEyeJPEGData: Data?
     @State private var showingCamera = false
+    @State private var showingStickerEditor = false
+    @State private var stickerEditingSourceImage: UIImage?
+    @State private var preparingStickerImage = false
 
     private enum DoubleInputChoice: Hashable, Identifiable {
         case unselected
@@ -449,15 +451,38 @@ struct LensFormView: View {
         .sheet(isPresented: $showingCamera) {
             EyeGuideCameraCaptureView(
                 onCapture: { image in
-                    Task { stickerEyeJPEGData = await makeStickerEyeJPEG(from: image, applyVisionCrop: true) }
+                    stickerEditingSourceImage = normalizedImage(from: image) ?? image
+                    showingStickerEditor = true
                     showingCamera = false
                 },
                 onCancel: { showingCamera = false }
             )
         }
+        .sheet(isPresented: $showingStickerEditor) {
+            if let source = stickerEditingSourceImage {
+                EyeEllipseEditorView(
+                    sourceImage: source,
+                    onCancel: {
+                        showingStickerEditor = false
+                    },
+                    onSave: { data in
+                        stickerEyeJPEGData = data
+                        showingStickerEditor = false
+                    }
+                )
+            }
+        }
         .onChange(of: stickerPickerItem) { _, next in
             Task {
-                stickerEyeJPEGData = await loadAndMakeStickerEyeJPEG(from: next)
+                await MainActor.run { preparingStickerImage = true }
+                let image = await loadSourceImage(from: next)
+                await MainActor.run {
+                    preparingStickerImage = false
+                    if let image {
+                        stickerEditingSourceImage = image
+                        showingStickerEditor = true
+                    }
+                }
             }
         }
         .onAppear {
@@ -491,15 +516,23 @@ struct LensFormView: View {
     @ViewBuilder
     private var photoSection: some View {
         Section {
-            HStack(spacing: 12) {
-                PhotosPicker(selection: $stickerPickerItem, matching: .images) {
-                    Label(photoPickerLabelText, systemImage: "photo")
-                }
+            PhotosPicker(selection: $stickerPickerItem, matching: .images) {
+                Label(photoPickerLabelText, systemImage: "photo")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
-                Button {
-                    showingCamera = true
-                } label: {
-                    Label("カメラ", systemImage: "camera")
+            Button {
+                showingCamera = true
+            } label: {
+                Label("カメラで撮影", systemImage: "camera")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if preparingStickerImage {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("写真を準備中…")
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -512,13 +545,13 @@ struct LensFormView: View {
                 }
             }
 
-            EyeEllipsePreview(data: stickerEyeJPEGData)
+            EyeStickerPreview(data: stickerEyeJPEGData)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 6)
         } header: {
             Text("写真")
         } footer: {
-            Text("枠に合わせて撮影 → 楕円形で切り抜き、図鑑の代表画像として表示します。")
+            Text("枠に合わせて撮影 → カード向けの四角形で切り抜いて、図鑑の代表画像として表示します。")
                 .foregroundStyle(.secondary)
         }
     }
@@ -655,63 +688,24 @@ struct LensFormView: View {
         recentPurchasePlacesRaw = items.prefix(30).joined(separator: "\n")
     }
 
-    private func loadAndMakeStickerEyeJPEG(from item: PhotosPickerItem?) async -> Data? {
+    private func loadSourceImage(from item: PhotosPickerItem?) async -> UIImage? {
         guard let item else { return nil }
         guard let data = try? await item.loadTransferable(type: Data.self) else { return nil }
-        return await makeStickerEyeJPEG(from: data, applyVisionCrop: true)
+        let image = downsampledImage(from: data, maxPixel: 2200) ?? UIImage(data: data)
+        guard let image else { return nil }
+        return normalizedImage(from: image) ?? image
     }
 
-    private func makeStickerEyeJPEG(from image: UIImage, applyVisionCrop: Bool = true) async -> Data? {
-        guard let data = image.jpegData(compressionQuality: 0.92) else { return nil }
-        return await makeStickerEyeJPEG(from: data, applyVisionCrop: applyVisionCrop)
-    }
-
-    private func makeStickerEyeJPEG(from imageData: Data, applyVisionCrop: Bool) async -> Data? {
-        var candidateData: Data? = imageData
-        if applyVisionCrop, autoCropEyeEnabled {
-            let side = EyeSide(rawValue: preferredEyeSideRaw) ?? .right
-            if let cropped = await EyeCropper.cropPreferredEye(from: imageData, side: side) {
-                candidateData = cropped
-            }
-        }
-        guard let candidateData, let uiImage = UIImage(data: candidateData) else { return nil }
-        return ellipseMaskedJPEG(from: uiImage)
-    }
-
-    private func ellipseMaskedJPEG(from image: UIImage) -> Data? {
-        let normalized = normalizedImage(from: image) ?? image
-
-        let canvasSize = CGSize(width: 640, height: 640)
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
-
-        let rendered = renderer.image { ctx in
-            UIColor.white.setFill()
-            ctx.fill(CGRect(origin: .zero, size: canvasSize))
-
-            let inset: CGFloat = 30
-            let ovalRect = CGRect(x: inset, y: inset, width: canvasSize.width - inset * 2, height: canvasSize.height - inset * 2)
-            ctx.cgContext.addEllipse(in: ovalRect)
-            ctx.cgContext.clip()
-
-            let drawRect = aspectFillRect(contentSize: normalized.size, boundsSize: canvasSize)
-            normalized.draw(in: drawRect)
-        }
-
-        return rendered.jpegData(compressionQuality: 0.92)
-    }
-
-    private func aspectFillRect(contentSize: CGSize, boundsSize: CGSize) -> CGRect {
-        guard contentSize.width > 0, contentSize.height > 0 else { return CGRect(origin: .zero, size: boundsSize) }
-        let scale = max(boundsSize.width / contentSize.width, boundsSize.height / contentSize.height)
-        let scaled = CGSize(width: contentSize.width * scale, height: contentSize.height * scale)
-        return CGRect(
-            x: (boundsSize.width - scaled.width) * 0.5,
-            y: (boundsSize.height - scaled.height) * 0.5,
-            width: scaled.width,
-            height: scaled.height
-        )
+    private func downsampledImage(from data: Data, maxPixel: CGFloat) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(maxPixel)
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 
     private func normalizedImage(from image: UIImage) -> UIImage? {
@@ -728,7 +722,7 @@ struct LensFormView: View {
 
 // Previews are intentionally omitted in this repository environment.
 
-private struct EyeEllipsePreview: View {
+private struct EyeStickerPreview: View {
     let data: Data?
 
     var body: some View {
@@ -742,7 +736,7 @@ private struct EyeEllipsePreview: View {
                     .resizable()
                     .scaledToFit()
                     .frame(height: 140)
-                    .clipShape(Ellipse())
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .padding(14)
             }
             .frame(height: 164)
@@ -762,6 +756,181 @@ private struct EyeEllipsePreview: View {
             }
             .frame(height: 164)
         }
+    }
+}
+
+private struct EyeEllipseEditorView: View {
+    let sourceImage: UIImage
+    let onCancel: () -> Void
+    let onSave: (Data?) -> Void
+
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+    @State private var rotation: Angle = .zero
+    @State private var lastRotation: Angle = .zero
+    @State private var viewportSize: CGSize = CGSize(width: 340, height: 220)
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                GeometryReader { geo in
+                    let viewWidth = min(geo.size.width - 24, 380)
+                    let viewHeight = viewWidth * 0.62
+
+                    ZStack {
+                        Color.black.opacity(0.85).ignoresSafeArea()
+
+                        ZStack {
+                            Image(uiImage: sourceImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: viewWidth * scale, height: viewHeight * scale)
+                                .rotationEffect(rotation)
+                                .offset(offset)
+                                .contentShape(Rectangle())
+                                .highPriorityGesture(dragGesture)
+                                .simultaneousGesture(magnifyGesture)
+                                .simultaneousGesture(rotationGesture)
+
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.white.opacity(0.95), lineWidth: 2)
+                                .frame(width: viewWidth * 0.92, height: viewHeight * 0.86)
+                                .allowsHitTesting(false)
+                        }
+                        .frame(width: viewWidth, height: viewHeight)
+                        .clipped()
+                        .onAppear {
+                            viewportSize = CGSize(width: viewWidth, height: viewHeight)
+                            clamp(in: viewportSize)
+                        }
+                        .onChange(of: viewWidth) { _, _ in
+                            viewportSize = CGSize(width: viewWidth, height: viewHeight)
+                            clamp(in: viewportSize)
+                        }
+                    }
+                }
+                .frame(height: 340)
+
+                Text("ピンチで拡大、ドラッグで位置調整")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 8)
+            }
+            .navigationTitle("目の位置を調整")
+            .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { onCancel() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") {
+                        onSave(renderMaskedJPEG())
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
+    }
+
+    private var dragGesture: some Gesture {
+        DragGesture()
+            .onChanged { value in
+                offset = CGSize(width: lastOffset.width + value.translation.width, height: lastOffset.height + value.translation.height)
+                clamp(in: viewportSize)
+            }
+            .onEnded { _ in
+                clamp(in: viewportSize)
+                lastOffset = offset
+            }
+    }
+
+    private var magnifyGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                scale = min(max(lastScale * value.magnification, 1), 6)
+                clamp(in: viewportSize)
+            }
+            .onEnded { _ in
+                lastScale = scale
+                clamp(in: viewportSize)
+            }
+    }
+
+    private var rotationGesture: some Gesture {
+        RotationGesture()
+            .onChanged { value in
+                rotation = lastRotation + value
+            }
+            .onEnded { _ in
+                lastRotation = rotation
+            }
+    }
+
+    private func clamp(in cropSize: CGSize) {
+        let movePadding: CGFloat = 60
+        let maxX = max(movePadding, (cropSize.width * scale - cropSize.width) * 0.5 + movePadding)
+        let maxY = max(movePadding, (cropSize.height * scale - cropSize.height) * 0.5 + movePadding)
+        offset.width = min(max(offset.width, -maxX), maxX)
+        offset.height = min(max(offset.height, -maxY), maxY)
+    }
+
+    private func renderMaskedJPEG() -> Data? {
+        let baseWidth: CGFloat = 960
+        let viewportAspect = max(viewportSize.height, 1) / max(viewportSize.width, 1)
+        let canvasSize = CGSize(width: baseWidth, height: baseWidth * viewportAspect)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
+
+        let rendered = renderer.image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(origin: .zero, size: canvasSize))
+
+            let clipWidth = canvasSize.width * 0.92
+            let clipHeight = canvasSize.height * 0.86
+            let clipRect = CGRect(
+                x: (canvasSize.width - clipWidth) * 0.5,
+                y: (canvasSize.height - clipHeight) * 0.5,
+                width: clipWidth,
+                height: clipHeight
+            )
+            let clipPath = UIBezierPath(roundedRect: clipRect, cornerRadius: 36)
+            clipPath.addClip()
+
+            let base = aspectFillRect(contentSize: sourceImage.size, boundsSize: canvasSize)
+            let sx = canvasSize.width / max(viewportSize.width, 1)
+            let sy = canvasSize.height / max(viewportSize.height, 1)
+
+            ctx.cgContext.saveGState()
+            ctx.cgContext.translateBy(x: base.midX + offset.width * sx, y: base.midY + offset.height * sy)
+            ctx.cgContext.rotate(by: CGFloat(rotation.radians))
+            ctx.cgContext.scaleBy(x: scale, y: scale)
+            sourceImage.draw(in: CGRect(
+                x: -base.width * 0.5,
+                y: -base.height * 0.5,
+                width: base.width,
+                height: base.height
+            ))
+            ctx.cgContext.restoreGState()
+        }
+
+        return rendered.jpegData(compressionQuality: 0.92)
+    }
+
+    private func aspectFillRect(contentSize: CGSize, boundsSize: CGSize) -> CGRect {
+        guard contentSize.width > 0, contentSize.height > 0 else { return CGRect(origin: .zero, size: boundsSize) }
+        let fillScale = max(boundsSize.width / contentSize.width, boundsSize.height / contentSize.height)
+        let scaled = CGSize(width: contentSize.width * fillScale, height: contentSize.height * fillScale)
+        return CGRect(
+            x: (boundsSize.width - scaled.width) * 0.5,
+            y: (boundsSize.height - scaled.height) * 0.5,
+            width: scaled.width,
+            height: scaled.height
+        )
     }
 }
 
