@@ -2,8 +2,11 @@ import SwiftUI
 import UIKit
 
 struct WearLogDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AppStore
     let wearLogId: UUID
+    @State private var showingEdit = false
+    @State private var showingDeleteConfirm = false
 
     var body: some View {
         List {
@@ -36,8 +39,39 @@ struct WearLogDetailView: View {
         .navigationTitle("記録詳細")
         .scrollContentBackground(.hidden)
         .background(AppTheme.subtleBackgroundGradient)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("編集") { showingEdit = true }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive) {
+                    showingDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                        .accessibilityLabel("削除")
+                }
+            }
+        }
+        .alert("この記録を削除しますか？", isPresented: $showingDeleteConfirm) {
+            Button("キャンセル", role: .cancel) {}
+            Button("削除する", role: .destructive) {
+                store.deleteWearLogs([wearLogId])
+                dismiss()
+            }
+        } message: {
+            Text("削除した記録は元に戻せません。")
+        }
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(AppTheme.background, for: .navigationBar)
+        .sheet(isPresented: $showingEdit) {
+            NavigationStack {
+                if let log = store.wearLogs.first(where: { $0.id == wearLogId }) {
+                    WearLogFormView(initialDay: log.day, editing: log)
+                } else {
+                    Text("記録が見つかりません")
+                }
+            }
+        }
     }
 }
 

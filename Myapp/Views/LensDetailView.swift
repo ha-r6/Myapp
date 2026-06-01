@@ -1,10 +1,12 @@
 import SwiftUI
 
 struct LensDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AppStore
 
     let lensId: UUID
     @State private var showingEdit = false
+    @State private var showingDeleteConfirm = false
 
     var body: some View {
         List {
@@ -15,16 +17,18 @@ struct LensDetailView: View {
                 }
 
                 Section("スペック") {
-                    LabeledContent("BC") { Text(lens.bc.map { String(format: "%.2f", $0) } ?? "—") }
-                    LabeledContent("DIA") { Text(lens.dia.map { String(format: "%.2f", $0) } ?? "—") }
-                    LabeledContent("着色直径") { Text(lens.graphicDiameter.map { String(format: "%.2f", $0) } ?? "—") }
+                    LabeledContent("BC") { Text(lens.bc.map { String(format: "%.1f", $0) } ?? "—") }
+                    LabeledContent("DIA") { Text(lens.dia.map { String(format: "%.1f", $0) } ?? "—") }
+                    LabeledContent("着色直径") { Text(lens.graphicDiameter.map { String(format: "%.1f", $0) } ?? "—") }
                     LabeledContent("度あり/なし") { Text(lens.isPrescription ? "度あり" : "度なし") }
                     if lens.isPrescription {
-                        LabeledContent("度数") { Text(lens.power.map { String(format: "%.2f", $0) } ?? "—") }
+                        LabeledContent("度数") {
+                            Text(powerDisplayText(for: lens))
+                        }
                     }
                     LabeledContent("使用期間") {
                         if let days = lens.replacementDays {
-                            Text("\(days) 日")
+                            Text(replacementLabel(days: days))
                         } else {
                             Text("—")
                         }
@@ -78,6 +82,27 @@ struct LensDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("編集") { showingEdit = true }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive) {
+                    showingDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                        .accessibilityLabel("削除")
+                }
+            }
+        }
+        .alert("このカラコンを削除しますか？", isPresented: $showingDeleteConfirm) {
+            Button("キャンセル", role: .cancel) {}
+            Button("削除する", role: .destructive) {
+                let relatedLogIds = store.wearLogs(for: lensId).map(\.id)
+                if relatedLogIds.isEmpty == false {
+                    store.deleteWearLogs(relatedLogIds)
+                }
+                store.deleteLens(id: lensId)
+                dismiss()
+            }
+        } message: {
+            Text("このカラコンに紐づく記録もすべて削除されます。")
         }
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(AppTheme.background, for: .navigationBar)
@@ -89,6 +114,26 @@ struct LensDetailView: View {
                     Text("レンズが見つかりません")
                 }
             }
+        }
+    }
+
+    private func powerDisplayText(for lens: Lens) -> String {
+        let left = lens.leftPower ?? lens.power
+        let right = lens.rightPower ?? lens.power
+        if let left, let right {
+            return "左 \(String(format: "%.2f", left)) / 右 \(String(format: "%.2f", right))"
+        }
+        if let left { return "左 \(String(format: "%.2f", left))" }
+        if let right { return "右 \(String(format: "%.2f", right))" }
+        return "—"
+    }
+
+    private func replacementLabel(days: Int) -> String {
+        switch days {
+        case 1: return "1day"
+        case 14: return "2weeks"
+        case 30: return "1month"
+        default: return "\(days)日"
         }
     }
 }

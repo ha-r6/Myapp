@@ -12,9 +12,6 @@ struct CalendarView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("カレンダー")
                         .font(.title.bold())
-                    Text("装着した日を記録して、あとで写真を見返しやすく。")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
@@ -44,8 +41,11 @@ struct CalendarView: View {
                             NavigationLink {
                                 WearLogDetailView(wearLogId: log.id)
                             } label: {
-                                WearLogRow(wearLog: log)
-                                    .appCard()
+                                if let lensId = log.lensId, let lens = store.lens(id: lensId) {
+                                    CalendarLensCard(lens: lens)
+                                } else {
+                                    UnselectedLensCard()
+                                }
                             }
                             .buttonStyle(.plain)
                         }
@@ -77,3 +77,40 @@ struct CalendarView: View {
 }
 
 // Previews are intentionally omitted in this repository environment.
+
+private struct UnselectedLensCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: "circle.dotted")
+                    .foregroundStyle(.secondary)
+                Text("レンズ未選択")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+            Text("図鑑から選ぶと、カードで見返しやすくなります。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(AppTheme.surface)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.black.opacity(0.10), lineWidth: 1))
+        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
+    }
+}
+
+private struct CalendarLensCard: View {
+    let lens: Lens
+
+    var body: some View {
+        LensStickerCard(lens: lens)
+            .scaleEffect(0.92)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+    }
+}

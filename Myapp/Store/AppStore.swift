@@ -7,15 +7,20 @@ final class AppStore: ObservableObject {
     @Published private(set) var wearLogs: [WearLog] = []
 
     private let saveURL: URL
+    static let appGroupId = "group.app.yamazaki.ha-san.Myapp"
 
     init(saveURL: URL? = nil) {
         if let saveURL {
             self.saveURL = saveURL
         } else {
-            self.saveURL = FileManager.default
-                .urls(for: .documentDirectory, in: .userDomainMask)
-                .first!
-                .appendingPathComponent("colorcon_store.json")
+            if let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupId) {
+                self.saveURL = sharedURL.appendingPathComponent("colorcon_store.json")
+            } else {
+                self.saveURL = FileManager.default
+                    .urls(for: .documentDirectory, in: .userDomainMask)
+                    .first!
+                    .appendingPathComponent("colorcon_store.json")
+            }
         }
         load()
     }
@@ -67,11 +72,24 @@ final class AppStore: ObservableObject {
         persist()
     }
 
+    func deleteLens(id: UUID) {
+        guard let index = lenses.firstIndex(where: { $0.id == id }) else { return }
+        deleteLenses(at: IndexSet(integer: index))
+    }
+
     // MARK: - Mutations (WearLog)
 
     func addWearLog(_ log: WearLog) {
         wearLogs.insert(log, at: 0)
-        updateStickerImageIfNeeded(from: log)
+        persist()
+    }
+
+    func upsertWearLog(_ log: WearLog) {
+        if let index = wearLogs.firstIndex(where: { $0.id == log.id }) {
+            wearLogs[index] = log
+        } else {
+            wearLogs.insert(log, at: 0)
+        }
         persist()
     }
 
@@ -88,6 +106,7 @@ final class AppStore: ObservableObject {
     }
 
     private func load() {
+        migrateLegacyStoreIfNeeded()
         guard let data = try? Data(contentsOf: saveURL) else { return }
         guard let payload = try? JSONDecoder().decode(StorePayload.self, from: data) else { return }
         lenses = payload.lenses.sorted(by: { $0.createdAt > $1.createdAt })
@@ -100,14 +119,15 @@ final class AppStore: ObservableObject {
         try? data.write(to: saveURL, options: [.atomic])
     }
 
-    private func updateStickerImageIfNeeded(from log: WearLog) {
-        guard let lensId = log.lensId else { return }
-        guard let index = lenses.firstIndex(where: { $0.id == lensId }) else { return }
-        guard lenses[index].stickerEyeJPEG == nil else { return }
-
-        // すでに切り抜かれたデータが入っている想定（なければ元画像のまま）
-        let candidate = log.indoorPhotoData ?? log.outdoorPhotoData
-        guard let candidate else { return }
-        lenses[index].stickerEyeJPEG = candidate
+    private func migrateLegacyStoreIfNeeded() {
+        guard FileManager.default.fileExists(atPath: saveURL.path) == false else { return }
+        let legacy = FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("colorcon_store.json")
+        guard let legacy, FileManager.default.fileExists(atPath: legacy.path) else { return }
+        try? FileManager.default.copyItem(at: legacy, to: saveURL)
     }
+
+    // 図鑑の代表画像はレンズ登録時に設定した `stickerEyeJPEG` のみを使用する。
 }

@@ -7,13 +7,11 @@ struct WearLogFormView: View {
     @EnvironmentObject private var store: AppStore
 
     let initialDay: Date
+    private let editingWearLog: WearLog?
 
     @State private var selectedDay: Date
     @State private var selectedLensId: UUID?
     @State private var memo: String = ""
-
-    @AppStorage(AppSettingsKeys.autoCropEyeEnabled) private var autoCropEyeEnabled = true
-    @AppStorage(AppSettingsKeys.preferredEyeSide) private var preferredEyeSideRaw = EyeSide.right.rawValue
 
     @State private var indoorPickerItem: PhotosPickerItem?
     @State private var outdoorPickerItem: PhotosPickerItem?
@@ -23,8 +21,9 @@ struct WearLogFormView: View {
     @State private var showingIndoorCamera = false
     @State private var showingOutdoorCamera = false
 
-    init(initialDay: Date) {
+    init(initialDay: Date, editing: WearLog? = nil) {
         self.initialDay = initialDay
+        self.editingWearLog = editing
         _selectedDay = State(initialValue: Calendar.current.startOfDay(for: initialDay))
     }
 
@@ -32,22 +31,11 @@ struct WearLogFormView: View {
         Form {
             Section("基本") {
                 DatePicker("日付", selection: $selectedDay, displayedComponents: [.date])
-                Picker("レンズ", selection: $selectedLensId) {
-                    Text("未選択").tag(UUID?.none)
-                    ForEach(store.lenses) { lens in
-                        Text(lens.displayName).tag(UUID?.some(lens.id))
-                    }
-                }
-            }
-
-            Section("着画の切り抜き") {
-                Toggle("目を自動で切り抜く", isOn: $autoCropEyeEnabled)
-                Picker("切り抜く目", selection: $preferredEyeSideRaw) {
-                    ForEach(EyeSide.allCases) { side in
-                        Text(side.label).tag(side.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
+                LensHorizontalPicker(
+                    selectedLensId: $selectedLensId,
+                    lenses: store.lenses
+                )
+                .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 6, trailing: 0))
             }
 
             Section("メモ") {
@@ -127,10 +115,10 @@ struct WearLogFormView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(AppTheme.background, for: .navigationBar)
         .task(id: indoorPickerItem) {
-            indoorPhotoData = await loadAndMaybeCrop(from: indoorPickerItem)
+            indoorPhotoData = await loadPhotoData(from: indoorPickerItem)
         }
         .task(id: outdoorPickerItem) {
-            outdoorPhotoData = await loadAndMaybeCrop(from: outdoorPickerItem)
+            outdoorPhotoData = await loadPhotoData(from: outdoorPickerItem)
         }
         .fullScreenCover(isPresented: $showingIndoorCamera) {
             CameraPicker(
@@ -138,7 +126,7 @@ struct WearLogFormView: View {
                     showingIndoorCamera = false
                     guard let image else { return }
                     Task { @MainActor in
-                        indoorPhotoData = await maybeCropUIImage(image)
+                        indoorPhotoData = image.jpegData(compressionQuality: 0.92)
                     }
                 },
                 onCancel: {
@@ -153,7 +141,7 @@ struct WearLogFormView: View {
                     showingOutdoorCamera = false
                     guard let image else { return }
                     Task { @MainActor in
-                        outdoorPhotoData = await maybeCropUIImage(image)
+                        outdoorPhotoData = image.jpegData(compressionQuality: 0.92)
                     }
                 },
                 onCancel: {
@@ -162,35 +150,143 @@ struct WearLogFormView: View {
             )
             .ignoresSafeArea()
         }
+        .onAppear {
+            guard let log = editingWearLog else { return }
+            selectedDay = Calendar.current.startOfDay(for: log.day)
+            selectedLensId = log.lensId
+            memo = log.memo
+            indoorPhotoData = log.indoorPhotoData
+            outdoorPhotoData = log.outdoorPhotoData
+        }
     }
 
     private func save() {
         let day = Calendar.current.startOfDay(for: selectedDay)
-        let log = WearLog(
-            day: day,
-            lensId: selectedLensId,
-            memo: memo,
-            indoorPhotoData: indoorPhotoData,
-            outdoorPhotoData: outdoorPhotoData
-        )
-        store.addWearLog(log)
+        if var editingWearLog {
+            editingWearLog.day = day
+            editingWearLog.lensId = selectedLensId
+            editingWearLog.memo = memo
+            editingWearLog.indoorPhotoData = indoorPhotoData
+            editingWearLog.outdoorPhotoData = outdoorPhotoData
+            store.upsertWearLog(editingWearLog)
+        } else {
+            let log = WearLog(
+                day: day,
+                lensId: selectedLensId,
+                memo: memo,
+                indoorPhotoData: indoorPhotoData,
+                outdoorPhotoData: outdoorPhotoData
+            )
+            store.addWearLog(log)
+        }
     }
 
-    private func loadAndMaybeCrop(from item: PhotosPickerItem?) async -> Data? {
+    private func loadPhotoData(from item: PhotosPickerItem?) async -> Data? {
         guard let item else { return nil }
         // PhotosPicker の結果は HEIC のこともあるので、まずは Data をそのまま保存（JPEG 以外でも表示は可能）
         guard let data = try? await item.loadTransferable(type: Data.self) else { return nil }
-
-        guard autoCropEyeEnabled else { return data }
-        let side = EyeSide(rawValue: preferredEyeSideRaw) ?? .right
-        return await EyeCropper.cropPreferredEye(from: data, side: side) ?? data
+        return data
     }
+}
 
-    private func maybeCropUIImage(_ image: UIImage) async -> Data? {
-        guard let data = image.jpegData(compressionQuality: 0.92) else { return nil }
-        guard autoCropEyeEnabled else { return data }
-        let side = EyeSide(rawValue: preferredEyeSideRaw) ?? .right
-        return await EyeCropper.cropPreferredEye(from: data, side: side) ?? data
+private struct LensHorizontalPicker: View {
+    @Binding var selectedLensId: UUID?
+    let lenses: [Lens]
+
+    @State private var showingAddLens = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("レンズ")
+                    .font(.headline)
+                Spacer()
+                if selectedLensId != nil {
+                    Button("未選択に戻す") {
+                        selectedLensId = nil
+                    }
+                    .font(.subheadline)
+                }
+            }
+            if lenses.isEmpty {
+                ContentUnavailableView("レンズがありません", systemImage: "circle.dotted")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(lenses) { lens in
+                            LensSelectableCard(
+                                lens: lens,
+                                isSelected: selectedLensId == lens.id
+                            )
+                            .onTapGesture {
+                                selectedLensId = lens.id
+                            }
+                        }
+
+                        AddLensCard()
+                            .onTapGesture { showingAddLens = true }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                }
+                .frame(height: 260)
+            }
+        }
+        .sheet(isPresented: $showingAddLens) {
+            NavigationStack {
+                LensFormView(prefillSuggestion: nil)
+            }
+        }
+    }
+}
+
+private struct LensSelectableCard: View {
+    let lens: Lens
+    let isSelected: Bool
+
+    var body: some View {
+        let cardWidth: CGFloat = 180
+        ZStack {
+            LensStickerCard(lens: lens)
+                .scaleEffect(0.94)
+                .frame(width: cardWidth)
+
+            if isSelected {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(AppTheme.accent, lineWidth: 3)
+                    .frame(width: cardWidth)
+            }
+        }
+        .animation(.easeInOut(duration: 0.16), value: isSelected)
+    }
+}
+
+private struct AddLensCard: View {
+    var body: some View {
+        let cardWidth: CGFloat = 180
+        VStack(spacing: 12) {
+            Image(systemName: "plus")
+                .font(.system(size: 24, weight: .bold))
+                .foregroundStyle(AppTheme.accent)
+
+            Text("新規登録")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: cardWidth, height: 240)
+        .scaleEffect(0.94)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(AppTheme.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(AppTheme.hairline, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
 

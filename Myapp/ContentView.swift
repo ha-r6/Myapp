@@ -11,19 +11,14 @@ struct ContentView: View {
     var body: some View {
         TabView {
             NavigationStack {
+                LensListView()
+            }
+            .tabItem { Label("図鑑", systemImage: "circle.grid.2x2") }
+
+            NavigationStack {
                 CalendarView()
             }
             .tabItem { Label("カレンダー", systemImage: "calendar") }
-
-            NavigationStack {
-                LensListView()
-            }
-            .tabItem { Label("レンズ", systemImage: "circle.grid.2x2") }
-
-            NavigationStack {
-                RepeatFilterView()
-            }
-            .tabItem { Label("リピ", systemImage: "arrow.triangle.2.circlepath") }
 
             NavigationStack {
                 SettingsView()

@@ -2,6 +2,7 @@ import Foundation
 
 enum LensColorCategory: String, CaseIterable, Identifiable, Codable {
     case all = "すべて"
+    case black = "ブラック系"
     case brown = "ブラウン系"
     case gray = "グレー系"
     case olive = "オリーブ系"
@@ -26,6 +27,8 @@ struct Lens: Identifiable, Codable, Hashable {
 
     var isPrescription: Bool = false
     var power: Double? = nil
+    var leftPower: Double? = nil
+    var rightPower: Double? = nil
     var replacementDays: Int? = nil
 
     var purchasePlace: String = ""
