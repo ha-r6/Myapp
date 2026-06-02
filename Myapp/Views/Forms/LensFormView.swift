@@ -16,6 +16,7 @@ struct LensFormView: View {
     @AppStorage(AppSettingsKeys.recentPurchasePlaces) private var recentPurchasePlacesRaw = ""
     @AppStorage(AppSettingsKeys.lastLeftPower) private var lastLeftPowerRaw = ""
     @AppStorage(AppSettingsKeys.lastRightPower) private var lastRightPowerRaw = ""
+    @AppStorage(AppSettingsKeys.aiSpecLookupEnabled) private var aiSpecLookupEnabled = false
 
     private let editingLens: Lens?
     private let prefillSuggestion: LensSuggestion?
@@ -36,11 +37,15 @@ struct LensFormView: View {
     @State private var rightPowerText: String = ""
     @State private var replacementDaysText: String = ""
 
-    @State private var repeatDecision: RepeatDecision = .maybe
+    @State private var repeatDecision: RepeatDecision = .yes
     @State private var repeatMemo: String = ""
     @State private var memo: String = ""
 
     @State private var validationErrorMessage: String? = nil
+    @State private var aiLookupMessage: String? = nil
+    @State private var aiLookupErrorMessage: String? = nil
+    @State private var aiLookupSourceURL: String? = nil
+    @State private var isLookingUpSpecs = false
     @State private var stickerPickerItem: PhotosPickerItem?
     @State private var stickerEyeJPEGData: Data?
     @State private var showingCamera = false
@@ -101,7 +106,7 @@ struct LensFormView: View {
     @State private var graphicDiameterChoice: DoubleInputChoice = .unselected
     @State private var leftPowerChoice: DoubleInputChoice = .unselected
     @State private var rightPowerChoice: DoubleInputChoice = .unselected
-    @State private var replacementPreset: ReplacementPreset = .other
+    @State private var replacementPreset: ReplacementPreset = .oneDay
 
     @FocusState private var isPurchasePlaceFocused: Bool
     @State private var isInitializing = true
@@ -157,7 +162,7 @@ struct LensFormView: View {
     private var replacementDaysInt: Int? { Int(replacementDaysText.trimmingCharacters(in: .whitespacesAndNewlines)) }
     private var replacementDaysForSave: Int? {
         if let days = replacementPreset.days { return days }
-        return nil
+        return replacementDaysInt
     }
 
     private var recentPurchasePlaces: [String] {
@@ -189,6 +194,20 @@ struct LensFormView: View {
 
     private var photoPickerLabelText: String {
         stickerEyeJPEGData == nil ? "写真を選ぶ" : "選び直す"
+    }
+
+    private var aiSpecLookupQuery: String {
+        [brand, productName]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+            .joined(separator: " ")
+    }
+
+    private var canRunAISpecLookup: Bool {
+        aiSpecLookupEnabled
+            && isLookingUpSpecs == false
+            && AppConfig.aiSpecLookupEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && aiSpecLookupQuery.isEmpty == false
     }
 
     var body: some View {
@@ -236,6 +255,51 @@ struct LensFormView: View {
             }
 
             Section("スペック") {
+                Button {
+                    Task { await lookupSpecs() }
+                } label: {
+                    HStack(spacing: 10) {
+                        if isLookingUpSpecs {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "sparkles")
+                        }
+                        Text(isLookingUpSpecs ? "AIでスペックを確認中…" : "AIでスペックを自動入力")
+                            .fontWeight(.semibold)
+                        Spacer()
+                    }
+                }
+                .disabled(canRunAISpecLookup == false)
+
+                if aiSpecLookupEnabled == false {
+                    Text("設定でAI自動入力をONにすると使えます。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if AppConfig.aiSpecLookupEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("AIサーバーの接続先が未設定です。開発者が AppConfig を設定する必要があります。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let aiLookupMessage {
+                    Text(aiLookupMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let aiLookupSourceURL, let url = URL(string: aiLookupSourceURL) {
+                    Link(destination: url) {
+                        Label("AIが見たページを開く", systemImage: "link")
+                            .font(.caption)
+                    }
+                }
+
+                if let aiLookupErrorMessage {
+                    Text(aiLookupErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+
                 Picker("BC", selection: $bcChoice) {
                     Text(DoubleInputChoice.unselected.label).tag(DoubleInputChoice.unselected)
                     ForEach(bcOptions, id: \.self) { v in
@@ -322,6 +386,10 @@ struct LensFormView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                if replacementPreset == .other {
+                    TextField("日数（例: 45）", text: $replacementDaysText)
+                        .keyboardType(.numberPad)
+                }
             }
             .onChange(of: bcChoice) { _, next in
                 if isInitializing { return }
@@ -540,7 +608,7 @@ struct LensFormView: View {
         lens.leftPower = isPrescription ? leftPower : nil
         lens.rightPower = isPrescription ? rightPower : nil
         lens.power = nil
-        lens.replacementDays = replacementPreset == .other ? nil : replacementDays
+        lens.replacementDays = replacementDays
         lens.repeatDecision = repeatDecision
         lens.repeatMemo = repeatMemo
         lens.memo = memo
@@ -586,6 +654,96 @@ struct LensFormView: View {
 
         if let days = lens.replacementDays {
             replacementPreset = replacementPreset(for: days)
+        } else {
+            replacementPreset = .other
+        }
+    }
+
+    private func lookupSpecs() async {
+        aiLookupMessage = nil
+        aiLookupErrorMessage = nil
+        aiLookupSourceURL = nil
+
+        guard aiSpecLookupEnabled else {
+            aiLookupErrorMessage = "設定でAI自動入力をONにしてください。"
+            return
+        }
+
+        let endpoint = AppConfig.aiSpecLookupEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard endpoint.isEmpty == false else {
+            aiLookupErrorMessage = "AIサーバーの接続先が未設定です。開発者が AppConfig を設定する必要があります。"
+            return
+        }
+
+        guard aiSpecLookupQuery.isEmpty == false else {
+            aiLookupErrorMessage = "ブランド名と商品名を入れてから試してください。"
+            return
+        }
+
+        isLookingUpSpecs = true
+        defer { isLookingUpSpecs = false }
+
+        do {
+            let result = try await LensSpecLookupService.lookup(
+                endpoint: endpoint,
+                query: aiSpecLookupQuery,
+                colorName: colorName
+            )
+            applyLookupResult(result)
+            aiLookupSourceURL = result.sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let note = result.note?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let note, note.isEmpty == false {
+                aiLookupMessage = "AI候補を反映しました。保存前に商品ページも確認してください。\(note)"
+            } else {
+                aiLookupMessage = "AI候補を反映しました。保存前に商品ページも確認してください。"
+            }
+        } catch {
+            aiLookupErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func applyLookupResult(_ result: LensSpecLookupResult) {
+        let previousInitializing = isInitializing
+        isInitializing = true
+        defer { isInitializing = previousInitializing }
+
+        if let normalizedBrand = result.brand?.trimmingCharacters(in: .whitespacesAndNewlines), normalizedBrand.isEmpty == false, brand.isEmpty {
+            brand = normalizedBrand
+        }
+
+        if let bc = result.bc {
+            applyDoubleLookupValue(bc, to: &bcChoice, text: &bcText, options: bcOptions)
+        }
+        if let dia = result.dia {
+            applyDoubleLookupValue(dia, to: &diaChoice, text: &diaText, options: diaOptions)
+        }
+        if let graphicDiameter = result.graphicDiameter {
+            applyDoubleLookupValue(graphicDiameter, to: &graphicDiameterChoice, text: &graphicDiameterText, options: graphicDiameterOptions)
+        }
+
+        if let replacementDays = result.replacementDays {
+            let preset = replacementPreset(for: replacementDays)
+            replacementPreset = preset
+            if preset == .other {
+                replacementDaysText = String(replacementDays)
+            }
+        }
+    }
+
+    private func applyDoubleLookupValue(
+        _ value: Double,
+        to choice: inout DoubleInputChoice,
+        text: inout String,
+        options: [Double]
+    ) {
+        let rounded = (value * 10).rounded() / 10
+        if options.contains(where: { abs($0 - rounded) < 0.001 }) {
+            choice = .value(rounded)
+            text = String(format: "%.1f", rounded)
+        } else {
+            choice = .manual
+            text = String(format: "%.1f", rounded)
         }
     }
 
@@ -890,19 +1048,37 @@ private struct EyeGuideCameraCaptureView: View {
                 Button {
                     camera.capture { image in
                         guard let image else { return }
+                        camera.stop()
                         onCapture(image)
                     }
                 } label: {
                     ZStack {
                         Circle()
-                            .fill(.white.opacity(0.25))
+                            .fill(.white.opacity(camera.isCaptureButtonEnabled ? 0.25 : 0.12))
                             .frame(width: 74, height: 74)
                         Circle()
-                            .fill(.white)
+                            .fill(.white.opacity(camera.isCaptureButtonEnabled ? 1 : 0.65))
                             .frame(width: 58, height: 58)
                     }
                 }
+                .disabled(camera.isCaptureButtonEnabled == false)
                 .padding(.bottom, 28)
+            }
+
+            if camera.isReady == false || camera.isCapturing {
+                VStack {
+                    Spacer()
+
+                    Label(
+                        camera.isCapturing ? "撮影中…" : "カメラを準備中…",
+                        systemImage: camera.isCapturing ? "photo" : "camera.aperture"
+                    )
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 126)
+                }
+                .transition(.opacity)
             }
         }
         .onAppear { camera.start() }
@@ -973,11 +1149,97 @@ private final class PreviewView: UIView {
 
 private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate {
     let session = AVCaptureSession()
+    @Published private(set) var isReady = false
+    @Published private(set) var isCapturing = false
+
     private let output = AVCapturePhotoOutput()
+    private let sessionQueue = DispatchQueue(label: "LensFormView.CameraModel.session")
     private var onCapture: ((UIImage?) -> Void)?
+    private var activeCameraPosition: AVCaptureDevice.Position = .unspecified
+    private var isConfigured = false
+
+    var isCaptureButtonEnabled: Bool {
+        isReady && isCapturing == false
+    }
 
     func start() {
-        if session.isRunning { return }
+        Task { @MainActor in
+            isReady = false
+            isCapturing = false
+        }
+
+        sessionQueue.async {
+            self.configureSessionIfNeeded()
+            guard self.session.isRunning == false else {
+                Task { @MainActor in self.isReady = true }
+                return
+            }
+
+            self.session.startRunning()
+            Task { @MainActor in self.isReady = self.session.isRunning }
+        }
+    }
+
+    func stop() {
+        Task { @MainActor in
+            isReady = false
+            isCapturing = false
+        }
+
+        sessionQueue.async {
+            guard self.session.isRunning else { return }
+            self.session.stopRunning()
+        }
+    }
+
+    func capture(completion: @escaping (UIImage?) -> Void) {
+        guard isCaptureButtonEnabled else { return }
+        onCapture = completion
+
+        Task { @MainActor in
+            isCapturing = true
+            isReady = false
+        }
+
+        sessionQueue.async {
+            guard self.session.isRunning else {
+                Task { @MainActor in
+                    self.isCapturing = false
+                    self.isReady = false
+                }
+                self.onCapture?(nil)
+                self.onCapture = nil
+                return
+            }
+
+            let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+            settings.flashMode = .off
+            settings.photoQualityPrioritization = .balanced
+            self.output.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        defer {
+            Task { @MainActor in
+                self.isCapturing = false
+                self.isReady = self.session.isRunning
+            }
+            onCapture = nil
+        }
+        guard error == nil else {
+            onCapture?(nil)
+            return
+        }
+        guard let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else {
+            onCapture?(nil)
+            return
+        }
+        onCapture?(correctedImageIfNeeded(image))
+    }
+
+    private func configureSessionIfNeeded() {
+        guard isConfigured == false else { return }
 
         session.beginConfiguration()
         session.sessionPreset = .photo
@@ -990,6 +1252,7 @@ private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptu
             session.commitConfiguration()
             return
         }
+        activeCameraPosition = device.position
 
         guard let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
             session.commitConfiguration()
@@ -997,41 +1260,41 @@ private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptu
         }
         session.addInput(input)
 
-        if session.canAddOutput(output) {
-            session.addOutput(output)
+        guard session.canAddOutput(output) else {
+            session.commitConfiguration()
+            return
         }
+        session.addOutput(output)
+        output.isHighResolutionCaptureEnabled = false
 
         session.commitConfiguration()
+        isConfigured = true
+    }
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            self.session.startRunning()
+    private func correctedImageIfNeeded(_ image: UIImage) -> UIImage {
+        guard activeCameraPosition == .front else { return image }
+        return horizontallyFlippedImage(from: image) ?? image
+    }
+
+    private func horizontallyFlippedImage(from image: UIImage) -> UIImage? {
+        let normalized = normalizedImage(from: image) ?? image
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = normalized.scale
+        let renderer = UIGraphicsImageRenderer(size: normalized.size, format: format)
+        return renderer.image { context in
+            context.cgContext.translateBy(x: normalized.size.width, y: 0)
+            context.cgContext.scaleBy(x: -1, y: 1)
+            normalized.draw(in: CGRect(origin: .zero, size: normalized.size))
         }
     }
 
-    func stop() {
-        guard session.isRunning else { return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            self.session.stopRunning()
+    private func normalizedImage(from image: UIImage) -> UIImage? {
+        if image.imageOrientation == .up { return image }
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = image.scale
+        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
         }
-    }
-
-    func capture(completion: @escaping (UIImage?) -> Void) {
-        onCapture = completion
-        let settings = AVCapturePhotoSettings()
-        settings.flashMode = .off
-        output.capturePhoto(with: settings, delegate: self)
-    }
-
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        defer { onCapture = nil }
-        guard error == nil else {
-            onCapture?(nil)
-            return
-        }
-        guard let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else {
-            onCapture?(nil)
-            return
-        }
-        onCapture?(image)
     }
 }

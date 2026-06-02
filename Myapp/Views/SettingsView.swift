@@ -5,6 +5,7 @@ struct SettingsView: View {
     @AppStorage(AppSettingsKeys.fixedPowerValue) private var fixedPowerValue = ""
     @AppStorage(AppSettingsKeys.fixedLeftPowerValue) private var fixedLeftPowerValue = ""
     @AppStorage(AppSettingsKeys.fixedRightPowerValue) private var fixedRightPowerValue = ""
+    @AppStorage(AppSettingsKeys.aiSpecLookupEnabled) private var aiSpecLookupEnabled = false
 
     private enum PowerChoice: Hashable, Identifiable {
         case unselected
@@ -43,6 +44,15 @@ struct SettingsView: View {
 
     var body: some View {
         List {
+            Section {
+                Toggle("AIでスペックを自動入力する", isOn: $aiSpecLookupEnabled)
+            } header: {
+                Text("AI")
+            } footer: {
+                Text("公開版では、AIサーバーの接続先はアプリ内に固定されます。")
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 Toggle("度数を固定する", isOn: $fixedPowerEnabled)
                 if fixedPowerEnabled {

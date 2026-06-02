@@ -294,7 +294,6 @@
 			mainGroup = F39422622FC1B23900D5E40B;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				F3B60F302FCDDF410090D424 /* XCRemoteSwiftPackageReference "generative-ai-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F394226C2FC1B23900D5E40B /* Products */;
@@ -776,7 +775,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
 	};
 	rootObject = F39422632FC1B23900D5E40B /* Project object */;
 }

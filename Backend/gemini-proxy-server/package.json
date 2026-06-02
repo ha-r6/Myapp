@@ -1,0 +1,12 @@
+{
+  "name": "gemini-proxy-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal no-database proxy server for Gemini lens spec lookup",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
