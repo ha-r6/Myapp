@@ -401,36 +401,29 @@ struct LensStickerCard: View {
     let lens: Lens
     private let cardHeight: CGFloat = 294
 
-    @AppStorage(LensCardSettingsKeys.enabledFields) private var enabledFieldsRaw = LensCardDisplaySettings.serialize(LensCardDisplaySettings.defaultEnabled)
-
     private var accent: Color {
         AppTheme.pastelColor(seed: lens.id.uuidString)
     }
 
     var body: some View {
-        let enabled = LensCardDisplaySettings.enabledFields(from: enabledFieldsRaw)
         VStack(alignment: .leading, spacing: 14) {
             EyeStickerImage(data: lens.stickerEyeJPEG, tint: accent)
 
             VStack(alignment: .leading, spacing: 6) {
-                if enabled.contains(.brand) {
-                    Text(lens.brand.isEmpty ? "（ブランド未設定）" : lens.brand)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(lens.brand.isEmpty ? "（ブランド未設定）" : lens.brand)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
-                if enabled.contains(.productName) || lens.colorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                if lens.colorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false || lens.productName.isEmpty == false {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        if enabled.contains(.productName) {
-                            Text(lens.productName.isEmpty ? "（品名未設定）" : lens.productName)
-                                .font(.headline)
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .minimumScaleFactor(0.8)
-                                .layoutPriority(2)
-                        }
+                        Text(lens.productName.isEmpty ? "（品名未設定）" : lens.productName)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .minimumScaleFactor(0.8)
+                            .layoutPriority(2)
                         if lens.colorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                             Text(lens.colorName)
                                 .font(.caption.weight(.semibold))
@@ -448,7 +441,7 @@ struct LensStickerCard: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                if enabled.contains(.graphicDiameter), let gd = lens.graphicDiameter {
+                if let gd = lens.graphicDiameter {
                     HStack(spacing: 8) {
                         StickerPill(text: "着色直径 \(String(format: "%.1f", gd))mm", color: accent)
                         Spacer(minLength: 0)
@@ -456,12 +449,8 @@ struct LensStickerCard: View {
                 }
 
                 HStack(spacing: 8) {
-                    if enabled.contains(.colorCategory) {
-                        StickerPill(text: lens.colorCategory.rawValue, color: accent)
-                    }
-                    if enabled.contains(.repeatDecision) {
-                        StickerPill(text: lens.repeatDecision.rawValue, color: AppTheme.accent)
-                    }
+                    StickerPill(text: lens.colorCategory.rawValue, color: accent)
+                    StickerPill(text: lens.repeatDecision.rawValue, color: accent)
                     Spacer(minLength: 0)
                 }
             }
@@ -489,7 +478,7 @@ private struct EyeStickerImage: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(data == nil ? tint.opacity(0.10) : .clear)
+                .fill(tint.opacity(0.10))
 
             Group {
                 if let data, let image = UIImage(data: data), let stickerImage = normalizedImage(from: image) {
@@ -557,11 +546,11 @@ private struct StickerPill: View {
     var body: some View {
         Text(text)
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(.primary.opacity(0.8))
+            .foregroundStyle(.primary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(color.opacity(0.16), in: Capsule())
-            .overlay(Capsule().stroke(color.opacity(0.25), lineWidth: 1))
+            .background(color.opacity(0.24), in: Capsule())
+            .overlay(Capsule().stroke(color.opacity(0.45), lineWidth: 1))
             .lineLimit(1)
     }
 }

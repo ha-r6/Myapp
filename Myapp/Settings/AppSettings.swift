@@ -17,9 +17,6 @@ enum EyeSide: String, CaseIterable, Identifiable {
 
 enum AppSettingsKeys {
     static let hasCompletedSetup = "hasCompletedSetup"
-    static let preferredEyeSide = "preferredEyeSide"
-    static let autoCropEyeEnabled = "autoCropEyeEnabled"
-    static let aiSpecLookupEnabled = "aiSpecLookupEnabled"
     static let fixedPowerEnabled = "fixedPowerEnabled"
     static let fixedPowerValue = "fixedPowerValue"
     static let fixedLeftPowerValue = "fixedLeftPowerValue"
@@ -31,7 +28,6 @@ enum AppSettingsKeys {
 
 struct SetupGateViewModifier: ViewModifier {
     @AppStorage(AppSettingsKeys.hasCompletedSetup) private var hasCompletedSetup = false
-    @AppStorage(AppSettingsKeys.preferredEyeSide) private var preferredEyeSideRaw = EyeSide.right.rawValue
 
     @State private var showing = false
 
@@ -44,10 +40,7 @@ struct SetupGateViewModifier: ViewModifier {
             }
             .sheet(isPresented: $showing) {
                 NavigationStack {
-                    InitialSetupView(
-                        preferredEyeSideRaw: $preferredEyeSideRaw,
-                        hasCompletedSetup: $hasCompletedSetup
-                    )
+                    InitialSetupView(hasCompletedSetup: $hasCompletedSetup)
                 }
                 .interactiveDismissDisabled()
             }
@@ -59,10 +52,8 @@ extension View {
 }
 
 private struct InitialSetupView: View {
-    @Binding var preferredEyeSideRaw: String
     @Binding var hasCompletedSetup: Bool
 
-    @AppStorage(AppSettingsKeys.autoCropEyeEnabled) private var autoCropEyeEnabled = true
     @AppStorage(AppSettingsKeys.fixedPowerEnabled) private var fixedPowerEnabled = false
     @AppStorage(AppSettingsKeys.fixedPowerValue) private var fixedPowerValue = ""
     @AppStorage(AppSettingsKeys.fixedLeftPowerValue) private var fixedLeftPowerValue = ""
@@ -105,17 +96,8 @@ private struct InitialSetupView: View {
     var body: some View {
         List {
             Section {
-                Text("最初に、写真から自動で切り抜く“目”を選んでください。後で変更もできます。")
+                Text("最初に度数の固定などを設定します。後で変更もできます。")
                     .foregroundStyle(.secondary)
-            }
-
-            Section("目の切り抜き") {
-                Picker("切り抜く目", selection: $preferredEyeSideRaw) {
-                    ForEach(EyeSide.allCases) { side in
-                        Text(side.label).tag(side.rawValue)
-                    }
-                }
-                Toggle("自動切り抜きを使う", isOn: $autoCropEyeEnabled)
             }
 
             Section {

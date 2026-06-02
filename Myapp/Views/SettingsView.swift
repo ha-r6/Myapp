@@ -1,10 +1,6 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @AppStorage(AppSettingsKeys.preferredEyeSide) private var preferredEyeSideRaw = EyeSide.right.rawValue
-    @AppStorage(AppSettingsKeys.autoCropEyeEnabled) private var autoCropEyeEnabled = true
-
-    @AppStorage(AppSettingsKeys.aiSpecLookupEnabled) private var aiSpecLookupEnabled = false
     @AppStorage(AppSettingsKeys.fixedPowerEnabled) private var fixedPowerEnabled = false
     @AppStorage(AppSettingsKeys.fixedPowerValue) private var fixedPowerValue = ""
     @AppStorage(AppSettingsKeys.fixedLeftPowerValue) private var fixedLeftPowerValue = ""
@@ -47,24 +43,6 @@ struct SettingsView: View {
 
     var body: some View {
         List {
-            Section("目の切り抜き") {
-                Toggle("自動切り抜きを使う", isOn: $autoCropEyeEnabled)
-                Picker("切り抜く目", selection: $preferredEyeSideRaw) {
-                    ForEach(EyeSide.allCases) { side in
-                        Text(side.label).tag(side.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            Section {
-                Toggle("AIでスペックを自動入力する", isOn: $aiSpecLookupEnabled)
-            } header: {
-                Text("AI自動入力")
-            } footer: {
-                Text("安全のため、GeminiのAPIキーはアプリに入れず、開発者が用意したサーバ（Firebase Functions等）経由で呼び出します。")
-            }
-
             Section {
                 Toggle("度数を固定する", isOn: $fixedPowerEnabled)
                 if fixedPowerEnabled {

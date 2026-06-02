@@ -9,7 +9,6 @@ struct LensFormView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: AppStore
 
-    @AppStorage(AppSettingsKeys.aiSpecLookupEnabled) private var aiSpecLookupEnabled = false
     @AppStorage(AppSettingsKeys.fixedPowerEnabled) private var fixedPowerEnabled = false
     @AppStorage(AppSettingsKeys.fixedPowerValue) private var fixedPowerValue = ""
     @AppStorage(AppSettingsKeys.fixedLeftPowerValue) private var fixedLeftPowerValue = ""
@@ -41,8 +40,6 @@ struct LensFormView: View {
     @State private var repeatMemo: String = ""
     @State private var memo: String = ""
 
-    @State private var aiLoading = false
-    @State private var aiErrorMessage: String? = nil
     @State private var validationErrorMessage: String? = nil
     @State private var stickerPickerItem: PhotosPickerItem?
     @State private var stickerEyeJPEGData: Data?
@@ -197,30 +194,6 @@ struct LensFormView: View {
     var body: some View {
         Form {
             photoSection
-
-            Section("AI") {
-                Button {
-                    Task { await runAISpecLookup() }
-                } label: {
-                    if aiLoading {
-                        HStack {
-                            ProgressView()
-                            Text("AIで調べています…")
-                        }
-                    } else {
-                        Text("AIでスペックを自動入力")
-                    }
-                }
-                .disabled(aiLoading || aiSpecLookupEnabled == false || AppConfig.aiSpecLookupEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                if aiSpecLookupEnabled == false {
-                    Text("設定で「AIでスペックを自動入力する」をONにしてください。")
-                        .foregroundStyle(.secondary)
-                } else if AppConfig.aiSpecLookupEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("自動入力の接続先が未設定です（開発者設定）。")
-                        .foregroundStyle(.secondary)
-                }
-            }
 
             Section("名称") {
                 TextField("ブランド", text: $brand)
@@ -428,16 +401,6 @@ struct LensFormView: View {
         }
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(AppTheme.background, for: .navigationBar)
-        .alert("AI自動入力", isPresented: Binding(
-            get: { aiErrorMessage != nil },
-            set: { isPresented in
-                if isPresented == false { aiErrorMessage = nil }
-            }
-        )) {
-            Button("OK", role: .cancel) { aiErrorMessage = nil }
-        } message: {
-            Text(aiErrorMessage ?? "")
-        }
         .alert("入力エラー", isPresented: Binding(
             get: { validationErrorMessage != nil },
             set: { isPresented in
@@ -553,46 +516,6 @@ struct LensFormView: View {
         } footer: {
             Text("枠に合わせて撮影 → カード向けの四角形で切り抜いて、図鑑の代表画像として表示します。")
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    @MainActor
-    private func runAISpecLookup() async {
-        let query = [brand, productName, colorName]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.isEmpty == false }
-            .joined(separator: " ")
-
-        aiLoading = true
-        defer { aiLoading = false }
-        do {
-            let client = LensSpecLookupClient(endpoint: AppConfig.aiSpecLookupEndpoint)
-            let result = try await client.lookup(query: query)
-            apply(result: result)
-        } catch {
-            aiErrorMessage = (error as? LocalizedError)?.errorDescription ?? "自動入力に失敗しました"
-        }
-    }
-
-    @MainActor
-    private func apply(result: LensSpecLookupResult) {
-        if let suggestedBrand = result.brand, brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            brand = suggestedBrand
-        }
-        if let bc = result.bc, bcText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            bcText = String(format: "%.1f", bc)
-        }
-        if let dia = result.dia, diaText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            diaText = String(format: "%.1f", dia)
-        }
-        if let gd = result.graphicDiameter, graphicDiameterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            graphicDiameterText = String(format: "%.1f", gd)
-        }
-        if let days = result.replacementDays, replacementDaysText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            replacementDaysText = String(days)
-        }
-        if let note = result.note, note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false, memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            memo = note
         }
     }
 

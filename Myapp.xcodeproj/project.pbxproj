@@ -63,11 +63,21 @@
 			);
 			target = F3A20E4A2FCD5D0A00E438A3 /* ShareExtension */;
 		};
+		F3B60F352FCDE1800090D424 /* Exceptions for "Myapp" folder in "Myapp" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = F394226A2FC1B23900D5E40B /* Myapp */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		F394226D2FC1B23900D5E40B /* Myapp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				F3B60F352FCDE1800090D424 /* Exceptions for "Myapp" folder in "Myapp" target */,
+			);
 			path = Myapp;
 			sourceTree = "<group>";
 		};
@@ -130,6 +140,7 @@
 				F394227B2FC1B23D00D5E40B /* MyappTests */,
 				F39422852FC1B23D00D5E40B /* MyappUITests */,
 				F3A20E4C2FCD5D0A00E438A3 /* ShareExtension */,
+				F3B60F312FCDDFF20090D424 /* Frameworks */,
 				F394226C2FC1B23900D5E40B /* Products */,
 			);
 			sourceTree = "<group>";
@@ -143,6 +154,13 @@
 				F3A20E4B2FCD5D0A00E438A3 /* ShareExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		F3B60F312FCDDFF20090D424 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -275,6 +293,9 @@
 			);
 			mainGroup = F39422622FC1B23900D5E40B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F3B60F302FCDDF410090D424 /* XCRemoteSwiftPackageReference "generative-ai-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F394226C2FC1B23900D5E40B /* Products */;
 			projectDirPath = "";
@@ -500,6 +521,7 @@
 				DEVELOPMENT_TEAM = 62VUXF24U7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Myapp/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "着画を撮影して記録するためにカメラへのアクセスが必要です。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "着画を記録するために写真へのアクセスが必要です。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -537,6 +559,7 @@
 				DEVELOPMENT_TEAM = 62VUXF24U7;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Myapp/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "着画を撮影して記録するためにカメラへのアクセスが必要です。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "着画を記録するために写真へのアクセスが必要です。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -646,6 +669,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62VUXF24U7;
@@ -661,6 +685,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "app.yamazaki.ha-san.Myapp.ShareExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -675,6 +700,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExtension.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 62VUXF24U7;
@@ -690,6 +716,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "app.yamazaki.ha-san.Myapp.ShareExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -749,6 +776,7 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
 	};
 	rootObject = F39422632FC1B23900D5E40B /* Project object */;
 }

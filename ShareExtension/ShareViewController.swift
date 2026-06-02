@@ -8,6 +8,8 @@ final class ShareViewController: UIViewController {
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let stackView = UIStackView()
+    private let scrollView = UIScrollView()
+    private let contentView = UIView()
     private let closeButton = UIButton(type: .system)
 
     override func viewDidLoad() {
@@ -28,22 +30,41 @@ final class ShareViewController: UIViewController {
         subtitleLabel.numberOfLines = 2
 
         stackView.axis = .vertical
-        stackView.spacing = 10
+        stackView.spacing = 12
         stackView.alignment = .fill
 
         closeButton.setTitle("閉じる", for: .normal)
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
 
-        let root = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, stackView, closeButton])
+        let root = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel, scrollView, closeButton])
         root.axis = .vertical
         root.spacing = 14
         root.translatesAutoresizingMaskIntoConstraints = false
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentView)
+        contentView.addSubview(stackView)
+
         view.addSubview(root)
 
         NSLayoutConstraint.activate([
             root.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             root.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             root.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            root.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+
+            contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+
+            stackView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
     }
 
@@ -58,17 +79,28 @@ final class ShareViewController: UIViewController {
         let payload = loadStorePayload()
         let dayLogs = payload.wearLogs.filter { Calendar.current.isDate($0.day, inSameDayAs: targetDay) }
         let lensMap = Dictionary(uniqueKeysWithValues: payload.lenses.map { ($0.id, $0) })
-        let names = dayLogs.compactMap { log -> String? in
+        let lenses = dayLogs.compactMap { log -> ShareLens? in
             guard let id = log.lensId, let lens = lensMap[id] else { return nil }
-            return lens.displayName
+            return lens
         }
-        let uniqueNames = Array(NSOrderedSet(array: names)) as? [String] ?? []
+        let uniqueLenses = uniqueById(lenses)
 
-        if uniqueNames.isEmpty {
+        if uniqueLenses.isEmpty {
             addEmptyCard("この日に記録されたカラコンはありません。")
         } else {
-            uniqueNames.forEach { addLensCard(title: "この日のカラコンは \($0) です") }
+            uniqueLenses.forEach { addLensCard($0) }
         }
+    }
+
+    private func uniqueById(_ lenses: [ShareLens]) -> [ShareLens] {
+        var seen = Set<UUID>()
+        var result: [ShareLens] = []
+        for lens in lenses {
+            if seen.contains(lens.id) { continue }
+            seen.insert(lens.id)
+            result.append(lens)
+        }
+        return result
     }
 
     private func resolveTargetDay() -> Date {
@@ -127,26 +159,102 @@ final class ShareViewController: UIViewController {
         return payload
     }
 
-    private func addLensCard(title: String) {
+    private func addLensCard(_ lens: ShareLens) {
         let card = UIView()
-        card.backgroundColor = UIColor.secondarySystemBackground
-        card.layer.cornerRadius = 12
+        card.backgroundColor = UIColor.systemBackground
+        card.layer.cornerRadius = 16
 
-        let label = UILabel()
-        label.text = title
-        label.numberOfLines = 2
-        label.font = .preferredFont(forTextStyle: .headline)
-        label.translatesAutoresizingMaskIntoConstraints = false
+        let imageArea = UIView()
+        imageArea.backgroundColor = UIColor.systemGray6
+        imageArea.layer.cornerRadius = 12
+        imageArea.clipsToBounds = true
+        imageArea.translatesAutoresizingMaskIntoConstraints = false
 
-        card.addSubview(label)
+        if let data = lens.stickerEyeJPEG, let image = UIImage(data: data) {
+            let iv = UIImageView(image: image)
+            iv.contentMode = .scaleAspectFill
+            iv.clipsToBounds = true
+            iv.layer.cornerRadius = 10
+            iv.translatesAutoresizingMaskIntoConstraints = false
+            imageArea.addSubview(iv)
+            NSLayoutConstraint.activate([
+                iv.leadingAnchor.constraint(equalTo: imageArea.leadingAnchor),
+                iv.trailingAnchor.constraint(equalTo: imageArea.trailingAnchor),
+                iv.topAnchor.constraint(equalTo: imageArea.topAnchor),
+                iv.bottomAnchor.constraint(equalTo: imageArea.bottomAnchor),
+            ])
+        } else {
+            let empty = UILabel()
+            empty.text = "目の写真がありません"
+            empty.font = .preferredFont(forTextStyle: .caption1)
+            empty.textColor = .secondaryLabel
+            empty.translatesAutoresizingMaskIntoConstraints = false
+            imageArea.addSubview(empty)
+            NSLayoutConstraint.activate([
+                empty.centerXAnchor.constraint(equalTo: imageArea.centerXAnchor),
+                empty.centerYAnchor.constraint(equalTo: imageArea.centerYAnchor),
+            ])
+        }
+
+        let brand = UILabel()
+        brand.text = lens.brand.trimmedOrNil ?? ""
+        brand.textColor = .secondaryLabel
+        brand.font = .preferredFont(forTextStyle: .caption1)
+
+        let title = UILabel()
+        title.text = lens.displayName
+        title.numberOfLines = 2
+        title.font = .preferredFont(forTextStyle: .headline)
+
+        let pillRow = UIStackView()
+        pillRow.axis = .horizontal
+        pillRow.spacing = 8
+        pillRow.alignment = .leading
+
+        if let gd = lens.graphicDiameter {
+            pillRow.addArrangedSubview(makePill("着色直径 \(String(format: "%.1f", gd))mm"))
+        }
+        pillRow.addArrangedSubview(makePill(lens.colorCategoryRaw))
+        pillRow.addArrangedSubview(makePill(lens.repeatDecisionRaw))
+
+        let v = UIStackView(arrangedSubviews: [imageArea, brand, title, pillRow])
+        v.axis = .vertical
+        v.spacing = 8
+        v.translatesAutoresizingMaskIntoConstraints = false
+
+        card.addSubview(v)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            label.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
-            label.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+            v.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+            v.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            v.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
+            v.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+            imageArea.heightAnchor.constraint(equalToConstant: 124),
         ])
 
         stackView.addArrangedSubview(card)
+    }
+
+    private func makePill(_ text: String) -> UIView {
+        let label = UILabel()
+        label.text = text
+        label.font = .preferredFont(forTextStyle: .caption2)
+        label.textColor = .label
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let container = UIView()
+        container.backgroundColor = UIColor.systemGray6
+        container.layer.cornerRadius = 12
+        container.translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 5),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -5),
+        ])
+        return container
     }
 
     private func addEmptyCard(_ message: String) {
@@ -169,6 +277,10 @@ private struct ShareLens: Codable {
     var brand: String
     var productName: String
     var colorName: String
+    var colorCategoryRaw: String
+    var repeatDecisionRaw: String
+    var graphicDiameter: Double?
+    var stickerEyeJPEG: Data?
 
     var displayName: String {
         let base = [brand.trimmedOrNil, productName.trimmedOrNil].compactMap { $0 }.joined(separator: " ")
