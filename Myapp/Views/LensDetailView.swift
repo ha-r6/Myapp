@@ -12,6 +12,12 @@ struct LensDetailView: View {
         ZStack {
             List {
                 if let lens = store.lens(id: lensId) {
+                    let logs = store.wearLogs(for: lensId)
+                    let memoLogs = logs.filter {
+                        $0.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    }
+                    let lensMemo = lens.memo.trimmingCharacters(in: .whitespacesAndNewlines)
+
                     Section("基本") {
                         LabeledContent("名称") { Text(lens.displayName) }
                         LabeledContent("購入場所") { Text(lens.purchasePlace.isEmpty ? "—" : lens.purchasePlace) }
@@ -45,16 +51,45 @@ struct LensDetailView: View {
                     }
 
                     Section("メモ") {
-                        if lens.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if lensMemo.isEmpty, memoLogs.isEmpty {
                             Text("—")
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text(lens.memo)
+                            if lensMemo.isEmpty == false {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("レンズメモ")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Text(lensMemo)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .padding(.bottom, memoLogs.isEmpty ? 0 : 8)
+                            }
+
+                            if memoLogs.isEmpty == false {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text("装着日のメモ")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+
+                                    ForEach(memoLogs) { log in
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(AppDateFormatters.day.string(from: log.day))
+                                                .font(.headline)
+                                            Text(log.memo)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .foregroundStyle(.secondary)
+                                                .multilineTextAlignment(.leading)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.vertical, 4)
+                                    }
+                                }
+                            }
                         }
                     }
 
                     Section("装着記録") {
-                        let logs = store.wearLogs(for: lensId)
                         if logs.isEmpty {
                             Text("まだ記録がありません")
                                 .foregroundStyle(.secondary)
