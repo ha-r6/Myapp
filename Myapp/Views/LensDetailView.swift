@@ -9,110 +9,123 @@ struct LensDetailView: View {
     @State private var showingDeleteConfirm = false
 
     var body: some View {
-        List {
-            if let lens = store.lens(id: lensId) {
-                Section("基本") {
-                    LabeledContent("名称") { Text(lens.displayName) }
-                    LabeledContent("購入場所") { Text(lens.purchasePlace.isEmpty ? "—" : lens.purchasePlace) }
-                }
-
-                Section("スペック") {
-                    LabeledContent("BC") { Text(lens.bc.map { String(format: "%.1f", $0) } ?? "—") }
-                    LabeledContent("DIA") { Text(lens.dia.map { String(format: "%.1f", $0) } ?? "—") }
-                    LabeledContent("着色直径") { Text(lens.graphicDiameter.map { String(format: "%.1f", $0) } ?? "—") }
-                    LabeledContent("度あり/なし") { Text(lens.isPrescription ? "度あり" : "度なし") }
-                    if lens.isPrescription {
-                        LabeledContent("度数") {
-                            Text(powerDisplayText(for: lens))
-                        }
+        ZStack {
+            List {
+                if let lens = store.lens(id: lensId) {
+                    Section("基本") {
+                        LabeledContent("名称") { Text(lens.displayName) }
+                        LabeledContent("購入場所") { Text(lens.purchasePlace.isEmpty ? "—" : lens.purchasePlace) }
                     }
-                    LabeledContent("使用期間") {
-                        if let days = lens.replacementDays {
-                            Text(replacementLabel(days: days))
-                        } else {
-                            Text("—")
-                        }
-                    }
-                }
 
-                Section("リピ") {
-                    LabeledContent("判断") { Text(lens.repeatDecision.rawValue) }
-                    if !lens.repeatMemo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(lens.repeatMemo)
-                    }
-                }
-
-                Section("メモ") {
-                    if lens.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("—")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(lens.memo)
-                    }
-                }
-
-                Section("装着記録") {
-                    let logs = store.wearLogs(for: lensId)
-                    if logs.isEmpty {
-                        Text("まだ記録がありません")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(logs) { log in
-                            NavigationLink {
-                                WearLogDetailView(wearLogId: log.id)
-                            } label: {
-                                WearLogRow(wearLog: log)
-                                    .appCard()
+                    Section("スペック") {
+                        LabeledContent("着色直径") { Text(lens.graphicDiameter.map { String(format: "%.1f", $0) } ?? "—") }
+                        LabeledContent("BC") { Text(lens.bc.map { String(format: "%.1f", $0) } ?? "—") }
+                        LabeledContent("DIA") { Text(lens.dia.map { String(format: "%.1f", $0) } ?? "—") }
+                        LabeledContent("含水率") { Text(lens.waterContentCategory?.rawValue ?? "—") }
+                        LabeledContent("度あり/なし") { Text(lens.isPrescription ? "度あり" : "度なし") }
+                        if lens.isPrescription {
+                            LabeledContent("度数") {
+                                Text(powerDisplayText(for: lens))
                             }
                         }
-                        .onDelete { indexSet in
-                            let ids = indexSet.map { logs[$0].id }
-                            store.deleteWearLogs(ids)
+                        LabeledContent("使用期間") {
+                            if let days = lens.replacementDays {
+                                Text(replacementLabel(days: days))
+                            } else {
+                                Text("—")
+                            }
                         }
                     }
-                }
-            } else {
-                ContentUnavailableView("レンズが見つかりません", systemImage: "exclamationmark.triangle")
-            }
-        }
-        .navigationTitle("レンズ詳細")
-        .scrollContentBackground(.hidden)
-        .background(AppTheme.subtleBackgroundGradient)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("編集") { showingEdit = true }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(role: .destructive) {
-                    showingDeleteConfirm = true
-                } label: {
-                    Image(systemName: "trash")
-                        .accessibilityLabel("削除")
-                }
-            }
-        }
-        .alert("このカラコンを削除しますか？", isPresented: $showingDeleteConfirm) {
-            Button("キャンセル", role: .cancel) {}
-            Button("削除する", role: .destructive) {
-                let relatedLogIds = store.wearLogs(for: lensId).map(\.id)
-                if relatedLogIds.isEmpty == false {
-                    store.deleteWearLogs(relatedLogIds)
-                }
-                store.deleteLens(id: lensId)
-                dismiss()
-            }
-        } message: {
-            Text("このカラコンに紐づく記録もすべて削除されます。")
-        }
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarBackground(AppTheme.background, for: .navigationBar)
-        .sheet(isPresented: $showingEdit) {
-            NavigationStack {
-                if let lens = store.lens(id: lensId) {
-                    LensFormView(editing: lens)
+
+                    Section("リピ") {
+                        LabeledContent("判断") { Text(lens.repeatDecision.rawValue) }
+                        if !lens.repeatMemo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(lens.repeatMemo)
+                        }
+                    }
+
+                    Section("メモ") {
+                        if lens.memo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("—")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(lens.memo)
+                        }
+                    }
+
+                    Section("装着記録") {
+                        let logs = store.wearLogs(for: lensId)
+                        if logs.isEmpty {
+                            Text("まだ記録がありません")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(logs) { log in
+                                NavigationLink {
+                                    WearLogDetailView(wearLogId: log.id)
+                                } label: {
+                                    Text(AppDateFormatters.day.string(from: log.day))
+                                        .font(.headline)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .appCard()
+                                }
+                            }
+                            .onDelete { indexSet in
+                                let ids = indexSet.map { logs[$0].id }
+                                store.deleteWearLogs(ids)
+                            }
+                        }
+                    }
                 } else {
-                    Text("レンズが見つかりません")
+                    ContentUnavailableView("レンズが見つかりません", systemImage: "exclamationmark.triangle")
                 }
+            }
+            .navigationTitle("レンズ詳細")
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.subtleBackgroundGradient)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("編集") { showingEdit = true }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) {
+                        showingDeleteConfirm = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .accessibilityLabel("削除")
+                    }
+                }
+            }
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(AppTheme.background, for: .navigationBar)
+            .sheet(isPresented: $showingEdit) {
+                NavigationStack {
+                    if let lens = store.lens(id: lensId) {
+                        LensFormView(editing: lens)
+                    } else {
+                        Text("レンズが見つかりません")
+                    }
+                }
+            }
+
+            if showingDeleteConfirm {
+                DestructiveConfirmationDialog(
+                    title: "このカラコンを削除しますか？",
+                    message: "このカラコンに紐づく記録もすべて削除されます。",
+                    cancelTitle: "キャンセル",
+                    destructiveTitle: "削除する",
+                    onCancel: {
+                        showingDeleteConfirm = false
+                    },
+                    onConfirm: {
+                        let relatedLogIds = store.wearLogs(for: lensId).map(\.id)
+                        if relatedLogIds.isEmpty == false {
+                            store.deleteWearLogs(relatedLogIds)
+                        }
+                        store.deleteLens(id: lensId)
+                        showingDeleteConfirm = false
+                        dismiss()
+                    }
+                )
             }
         }
     }

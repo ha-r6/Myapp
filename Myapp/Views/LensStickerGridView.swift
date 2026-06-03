@@ -7,6 +7,7 @@ struct LensStickerGridView: View {
 
     @State private var filter = LensStickerFilter()
     @State private var showingFilterSheet = false
+    @State private var pendingDeleteLens: Lens?
 
     private let repeatDecisionOptions: [RepeatDecisionChoice] = [.all] + RepeatDecision.allCases.map { .value($0) }
 
@@ -44,102 +45,155 @@ struct LensStickerGridView: View {
 
     var body: some View {
         let filtered = filteredLenses()
-        ScrollView {
-            VStack(spacing: 16) {
-                StickerPageHeaderView(
-                    title: "図鑑"
-                )
+        ZStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    StickerPageHeaderView(
+                        title: "図鑑"
+                    )
 
-                HStack(spacing: 10) {
-                    if let facet = filter.activeFacet {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            Group {
-                                switch facet {
-                                case .repeatDecision:
-                                    Picker("リピ", selection: $filter.repeatDecision) {
-                                        ForEach(repeatDecisionOptions) { option in
-                                            Text(option.label).tag(option)
+                    HStack(spacing: 10) {
+                        if let facet = filter.activeFacet {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                Group {
+                                    switch facet {
+                                    case .repeatDecision:
+                                        Picker("リピ", selection: $filter.repeatDecision) {
+                                            ForEach(repeatDecisionOptions) { option in
+                                                Text(option.label).tag(option)
+                                            }
                                         }
-                                    }
 
-                                case .bc:
-                                    Picker("BC", selection: $filter.bcChoice) {
-                                        ForEach(bcOptions) { option in
-                                            Text(option.label).tag(option)
+                                    case .bc:
+                                        Picker("BC", selection: $filter.bcChoice) {
+                                            ForEach(bcOptions) { option in
+                                                Text(option.label).tag(option)
+                                            }
                                         }
-                                    }
 
-                                case .graphicDiameter:
-                                    Picker("着色直径", selection: $filter.graphicDiameterChoice) {
-                                        ForEach(graphicDiameterOptions) { option in
-                                            Text(option.label).tag(option)
+                                    case .graphicDiameter:
+                                        Picker("着色直径", selection: $filter.graphicDiameterChoice) {
+                                            ForEach(graphicDiameterOptions) { option in
+                                                Text(option.label).tag(option)
+                                            }
                                         }
-                                    }
 
-                                case .colorCategory:
-                                    Picker("色系統", selection: $filter.colorCategory) {
-                                        ForEach(colorCategoryOptions) { cat in
-                                            Text(cat.rawValue).tag(cat)
+                                    case .colorCategory:
+                                        Picker("色系統", selection: $filter.colorCategory) {
+                                            ForEach(colorCategoryOptions) { cat in
+                                                Text(cat.rawValue).tag(cat)
+                                            }
                                         }
                                     }
                                 }
+                                .pickerStyle(.segmented)
+                                .padding(.leading, 12)
+                                .padding(.vertical, 4)
                             }
-                            .pickerStyle(.segmented)
-                            .padding(.leading, 12)
-                            .padding(.vertical, 4)
+                        } else {
+                            Text("絞り込み")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.leading, 12)
+                                .padding(.vertical, 12)
                         }
-                    } else {
-                        Text("絞り込み")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.leading, 12)
-                            .padding(.vertical, 12)
-                    }
 
-                    Button {
-                        showingFilterSheet = true
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .imageScale(.large)
-                            .accessibilityLabel("絞り込み")
-                            .padding(.trailing, 12)
-                    }
-                }
-                .appCard()
-                .padding(.horizontal, 16)
-
-                LazyVGrid(columns: columns, spacing: cardSpacing) {
-                    ForEach(filtered) { lens in
-                        NavigationLink {
-                            LensDetailView(lensId: lens.id)
+                        Button {
+                            showingFilterSheet = true
                         } label: {
-                            LensStickerCard(lens: lens)
-                                .frame(maxWidth: .infinity)
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                                .imageScale(.large)
+                                .accessibilityLabel("絞り込み")
+                                .padding(.trailing, 12)
                         }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                if let index = lenses.firstIndex(where: { $0.id == lens.id }) {
-                                    onDelete(IndexSet(integer: index))
-                                }
+                    }
+                    .appCard()
+                    .padding(.horizontal, 16)
+
+                    LazyVGrid(columns: columns, spacing: cardSpacing) {
+                        ForEach(Array(filtered.enumerated()), id: \.element.id) { index, lens in
+                            NavigationLink {
+                                LensDetailView(lensId: lens.id)
                             } label: {
-                                Label("削除", systemImage: "trash")
+                                LensStickerCard(lens: lens, paletteIndex: index)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    pendingDeleteLens = lens
+                                } label: {
+                                    Label("削除", systemImage: "trash")
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, horizontalPadding)
-                .padding(.bottom, 24)
             }
-        }
-        .background(StickerBackgroundView())
-        .sheet(isPresented: $showingFilterSheet) {
-            NavigationStack {
-                LensStickerFilterSheet(
-                    lenses: lenses,
-                    filter: $filter
+            .background(StickerBackgroundView())
+            .sheet(isPresented: $showingFilterSheet) {
+                NavigationStack {
+                    LensStickerFilterSheet(
+                        lenses: lenses,
+                        filter: $filter
+                    )
+                }
+            }
+
+            if let lens = pendingDeleteLens {
+                Color.black.opacity(0.25)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        pendingDeleteLens = nil
+                    }
+
+                VStack(spacing: 12) {
+                    Text("このカラコンを削除しますか？")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    Text("削除すると、このカラコンの情報は元に戻せません。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    HStack(spacing: 12) {
+                        Button("キャンセル") {
+                            pendingDeleteLens = nil
+                        }
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color(.systemGray6))
+                        .clipShape(Capsule())
+
+                        Button("削除する") {
+                            if let index = lenses.firstIndex(where: { $0.id == lens.id }) {
+                                onDelete(IndexSet(integer: index))
+                            }
+                            pendingDeleteLens = nil
+                        }
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.red)
+                        .clipShape(Capsule())
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: 320)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Color.black.opacity(0.08), lineWidth: 1)
                 )
+                .padding(.horizontal, 24)
             }
         }
     }
@@ -399,10 +453,54 @@ struct StickerBackgroundView: View {
 
 struct LensStickerCard: View {
     let lens: Lens
+    let paletteIndex: Int?
     private let cardHeight: CGFloat = 294
 
     private var accent: Color {
-        AppTheme.pastelColor(seed: lens.id.uuidString)
+        if let paletteIndex {
+            return AppTheme.pastelColor(index: paletteIndex)
+        }
+        return AppTheme.pastelColor(seed: lens.id.uuidString)
+    }
+
+    private var colorCategoryColor: Color {
+        switch lens.colorCategory {
+        case .all:
+            return accent
+        case .black:
+            return Color(red: 0.74, green: 0.76, blue: 0.80)
+        case .brown:
+            return Color(red: 0.82, green: 0.69, blue: 0.56)
+        case .gray:
+            return Color(red: 0.70, green: 0.85, blue: 0.96)
+        case .olive:
+            return Color(red: 0.77, green: 0.88, blue: 0.50)
+        case .other:
+            return Color(red: 0.88, green: 0.72, blue: 0.90)
+        }
+    }
+
+    private var repeatDecisionColor: Color {
+        switch lens.repeatDecision {
+        case .yes:
+            return Color(red: 0.98, green: 0.72, blue: 0.84)
+        case .no:
+            return Color(red: 0.69, green: 0.88, blue: 0.98)
+        case .maybe:
+            return Color(red: 0.98, green: 0.90, blue: 0.56)
+        }
+    }
+
+    private var graphicDiameterColor: Color {
+        guard let gd = lens.graphicDiameter else { return accent }
+        switch gd {
+        case ..<13.0:
+            return Color(red: 0.84, green: 0.78, blue: 0.97)
+        case 13.0..<13.5:
+            return Color(red: 0.98, green: 0.79, blue: 0.87)
+        default:
+            return Color(red: 0.99, green: 0.83, blue: 0.67)
+        }
     }
 
     var body: some View {
@@ -415,44 +513,44 @@ struct LensStickerCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
-                if lens.colorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false || lens.productName.isEmpty == false {
+                if lens.productName.isEmpty == false || lens.colorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(lens.productName.isEmpty ? "（品名未設定）" : lens.productName)
-                            .font(.headline)
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .minimumScaleFactor(0.8)
+                            .minimumScaleFactor(0.82)
                             .layoutPriority(2)
+
                         if lens.colorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
                             Text(lens.colorName)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
-                                .layoutPriority(0)
+                                .minimumScaleFactor(0.85)
+                                .layoutPriority(1)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .clipped()
                 }
-
-                // 着色直径はピル表示へ
             }
 
             VStack(alignment: .leading, spacing: 10) {
                 if let gd = lens.graphicDiameter {
                     HStack(spacing: 8) {
-                        StickerPill(text: "着色直径 \(String(format: "%.1f", gd))mm", color: accent)
+                        StickerPill(text: "着色直径 \(String(format: "%.1f", gd))mm", color: graphicDiameterColor)
                         Spacer(minLength: 0)
                     }
                 }
 
-                HStack(spacing: 8) {
-                    StickerPill(text: lens.colorCategory.rawValue, color: accent)
-                    StickerPill(text: lens.repeatDecision.rawValue, color: accent)
-                    Spacer(minLength: 0)
+                HStack(spacing: 6) {
+                    StickerPill(text: lens.colorCategory.rawValue, color: colorCategoryColor)
+                    StickerPill(text: lens.repeatDecision.rawValue, color: repeatDecisionColor)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(14)
@@ -475,10 +573,14 @@ private struct EyeStickerImage: View {
     let tint: Color
     private let imageAreaHeight: CGFloat = 126
 
+    private var placeholderBackgroundOpacity: Double {
+        data == nil ? 0.14 : 0.06
+    }
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(tint.opacity(0.10))
+                .fill(tint.opacity(placeholderBackgroundOpacity))
 
             Group {
                 if let data, let image = UIImage(data: data), let stickerImage = normalizedImage(from: image) {
@@ -547,8 +649,9 @@ private struct StickerPill: View {
         Text(text)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(.primary)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 30)
             .background(color.opacity(0.24), in: Capsule())
             .overlay(Capsule().stroke(color.opacity(0.45), lineWidth: 1))
             .lineLimit(1)

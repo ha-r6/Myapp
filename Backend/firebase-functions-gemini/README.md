@@ -24,6 +24,13 @@
 
 ## Functions側（このサンプルを使う）
 
+このリポジトリで実際にデプロイ対象になるファイルは次です。
+
+- `Backend/firebase-functions-gemini/functions/index.js`
+
+ルート直下の `Backend/firebase-functions-gemini/index.js` は、貼り付け用の簡易サンプルです。
+本番反映したい変更は、基本的に `functions/index.js` に入れてからデプロイしてください。
+
 ### 0) 事前準備（Mac）
 
 - Node.js をインストール（LTS推奨）
@@ -50,11 +57,8 @@
 
 ### 3) サンプルコードを貼る
 
-`functions/index.js` を開いて、このリポジトリの
-
-- `Backend/firebase-functions-gemini/index.js`
-
-の中身をコピペしてください。
+`functions/index.js` を開いて、このリポジトリの `Backend/firebase-functions-gemini/functions/index.js` を編集してください。
+このファイルが Firebase にそのままデプロイされます。
 
 ### 4) APIキーをサーバに入れる（重要）
 
@@ -71,6 +75,7 @@ Firebase Functions（v2）の例（環境変数）:
 `firebase deploy --only functions`
 
 デプロイ後に表示される `lensLookup` のURLを、`Myapp/AppConfig.swift` に貼ります。
+すでにURLが設定済みなら、同じ関数を上書きデプロイするだけでアプリ側のコード変更なしに反映できます。
 
 ## よくある安全対策（おすすめ）
 

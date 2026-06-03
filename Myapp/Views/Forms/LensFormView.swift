@@ -16,7 +16,6 @@ struct LensFormView: View {
     @AppStorage(AppSettingsKeys.recentPurchasePlaces) private var recentPurchasePlacesRaw = ""
     @AppStorage(AppSettingsKeys.lastLeftPower) private var lastLeftPowerRaw = ""
     @AppStorage(AppSettingsKeys.lastRightPower) private var lastRightPowerRaw = ""
-    @AppStorage(AppSettingsKeys.aiSpecLookupEnabled) private var aiSpecLookupEnabled = false
 
     private let editingLens: Lens?
     private let prefillSuggestion: LensSuggestion?
@@ -31,6 +30,7 @@ struct LensFormView: View {
     @State private var graphicDiameterText: String = ""
 
     @State private var colorCategorySelection: LensColorCategory? = nil
+    @State private var waterContentCategorySelection: LensWaterContentCategory? = nil
 
     @State private var isPrescription: Bool = false
     @State private var leftPowerText: String = ""
@@ -42,15 +42,11 @@ struct LensFormView: View {
     @State private var memo: String = ""
 
     @State private var validationErrorMessage: String? = nil
-    @State private var aiLookupMessage: String? = nil
-    @State private var aiLookupErrorMessage: String? = nil
-    @State private var aiLookupSourceURL: String? = nil
-    @State private var isLookingUpSpecs = false
     @State private var stickerPickerItem: PhotosPickerItem?
     @State private var stickerEyeJPEGData: Data?
     @State private var showingCamera = false
-    @State private var showingStickerEditor = false
-    @State private var stickerEditingSourceImage: UIImage?
+    @State private var stickerEditingSourceImage: EditableSourceImage?
+    @State private var pendingCapturedImage: UIImage?
     @State private var preparingStickerImage = false
 
     private enum DoubleInputChoice: Hashable, Identifiable {
@@ -101,6 +97,11 @@ struct LensFormView: View {
         }
     }
 
+    private struct EditableSourceImage: Identifiable {
+        let id = UUID()
+        let image: UIImage
+    }
+
     @State private var bcChoice: DoubleInputChoice = .unselected
     @State private var diaChoice: DoubleInputChoice = .unselected
     @State private var graphicDiameterChoice: DoubleInputChoice = .unselected
@@ -120,6 +121,24 @@ struct LensFormView: View {
     private var diaOptions: [Double] { stride(from: 13.8, through: 15.0, by: 0.1).map { ($0 * 10).rounded() / 10 } }
     private var graphicDiameterOptions: [Double] { stride(from: 12.5, through: 15.0, by: 0.1).map { ($0 * 10).rounded() / 10 } }
     private var powerOptions: [Double] { stride(from: 0.0, through: -10.0, by: -0.25).map { ($0 * 100).rounded() / 100 } }
+    private var bcChoiceOptions: [DoubleInputChoice] {
+        [.unselected] + bcOptions.map(DoubleInputChoice.value) + [.manual]
+    }
+    private var diaChoiceOptions: [DoubleInputChoice] {
+        [.unselected] + diaOptions.map(DoubleInputChoice.value) + [.manual]
+    }
+    private var graphicDiameterChoiceOptions: [DoubleInputChoice] {
+        [.unselected] + graphicDiameterOptions.map(DoubleInputChoice.value) + [.manual]
+    }
+    private var powerChoiceOptions: [DoubleInputChoice] {
+        [.unselected] + powerOptions.map(DoubleInputChoice.value) + [.manual]
+    }
+    private var waterContentChoiceOptions: [LensWaterContentCategory?] {
+        [nil] + LensWaterContentCategory.allCases.map(Optional.some)
+    }
+    private var selectableColorCategories: [LensColorCategory] {
+        LensColorCategory.allCases.filter { $0 != .all }
+    }
 
     private var legacyFixedPowerDouble: Double? {
         let trimmed = fixedPowerValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -183,8 +202,9 @@ struct LensFormView: View {
     }
 
     private var isFormValid: Bool {
-        if bcDouble == nil || diaDouble == nil || graphicDiameterDouble == nil { return false }
-        if replacementPreset != .other, replacementDaysForSave == nil { return false }
+        if brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+        if productName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+        if graphicDiameterDouble == nil { return false }
         if isPrescription {
             if fixedPowerEnabled { return true }
             return leftPowerDouble != nil && rightPowerDouble != nil
@@ -196,257 +216,28 @@ struct LensFormView: View {
         stickerEyeJPEGData == nil ? "写真を選ぶ" : "選び直す"
     }
 
-    private var aiSpecLookupQuery: String {
-        [brand, productName]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.isEmpty == false }
-            .joined(separator: " ")
+    private var purchasePlaceGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 88), spacing: 8)]
     }
 
-    private var canRunAISpecLookup: Bool {
-        aiSpecLookupEnabled
-            && isLookingUpSpecs == false
-            && AppConfig.aiSpecLookupEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            && aiSpecLookupQuery.isEmpty == false
+    private var validationAlertBinding: Binding<Bool> {
+        Binding(
+            get: { validationErrorMessage != nil },
+            set: { isPresented in
+                if isPresented == false { validationErrorMessage = nil }
+            }
+        )
     }
 
     var body: some View {
         Form {
             photoSection
-
-            Section("名称") {
-                TextField("ブランド", text: $brand)
-                TextField("商品名", text: $productName)
-                TextField("カラー", text: $colorName)
-            }
-
-            Section("カラー分類") {
-                Picker("分類", selection: $colorCategorySelection) {
-                    Text("選択する").tag(Optional<LensColorCategory>.none)
-                    ForEach(LensColorCategory.allCases.filter { $0 != .all }) { cat in
-                        Text(cat.rawValue).tag(Optional<LensColorCategory>.some(cat))
-                    }
-                }
-            }
-
-            Section("購入") {
-                TextField("購入場所（例: Qoo10 / 楽天 / 店舗名）", text: $purchasePlace)
-                    .focused($isPurchasePlaceFocused)
-
-                if isPurchasePlaceFocused, purchasePlaceSuggestions.isEmpty == false {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("履歴")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        let columns = [GridItem(.adaptive(minimum: 88), spacing: 8)]
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-                            ForEach(purchasePlaceSuggestions, id: \.self) { suggestion in
-                                Button(suggestion) {
-                                    purchasePlace = suggestion
-                                    isPurchasePlaceFocused = false
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-            }
-
-            Section("スペック") {
-                Button {
-                    Task { await lookupSpecs() }
-                } label: {
-                    HStack(spacing: 10) {
-                        if isLookingUpSpecs {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "sparkles")
-                        }
-                        Text(isLookingUpSpecs ? "AIでスペックを確認中…" : "AIでスペックを自動入力")
-                            .fontWeight(.semibold)
-                        Spacer()
-                    }
-                }
-                .disabled(canRunAISpecLookup == false)
-
-                if aiSpecLookupEnabled == false {
-                    Text("設定でAI自動入力をONにすると使えます。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if AppConfig.aiSpecLookupEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("AIサーバーの接続先が未設定です。開発者が AppConfig を設定する必要があります。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let aiLookupMessage {
-                    Text(aiLookupMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let aiLookupSourceURL, let url = URL(string: aiLookupSourceURL) {
-                    Link(destination: url) {
-                        Label("AIが見たページを開く", systemImage: "link")
-                            .font(.caption)
-                    }
-                }
-
-                if let aiLookupErrorMessage {
-                    Text(aiLookupErrorMessage)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
-                Picker("BC", selection: $bcChoice) {
-                    Text(DoubleInputChoice.unselected.label).tag(DoubleInputChoice.unselected)
-                    ForEach(bcOptions, id: \.self) { v in
-                        Text(String(format: "%.1f", v)).tag(DoubleInputChoice.value(v))
-                    }
-                    Text(DoubleInputChoice.manual.label).tag(DoubleInputChoice.manual)
-                }
-                .pickerStyle(.menu)
-                if bcChoice == .manual {
-                    TextField("BC（例: 8.6）", text: $bcText)
-                        .keyboardType(.decimalPad)
-                }
-
-                Picker("DIA", selection: $diaChoice) {
-                    Text(DoubleInputChoice.unselected.label).tag(DoubleInputChoice.unselected)
-                    ForEach(diaOptions, id: \.self) { v in
-                        Text(String(format: "%.1f", v)).tag(DoubleInputChoice.value(v))
-                    }
-                    Text(DoubleInputChoice.manual.label).tag(DoubleInputChoice.manual)
-                }
-                .pickerStyle(.menu)
-                if diaChoice == .manual {
-                    TextField("DIA（例: 14.2）", text: $diaText)
-                        .keyboardType(.decimalPad)
-                }
-
-                Picker("着色直径", selection: $graphicDiameterChoice) {
-                    Text(DoubleInputChoice.unselected.label).tag(DoubleInputChoice.unselected)
-                    ForEach(graphicDiameterOptions, id: \.self) { v in
-                        Text(String(format: "%.1f", v)).tag(DoubleInputChoice.value(v))
-                    }
-                    Text(DoubleInputChoice.manual.label).tag(DoubleInputChoice.manual)
-                }
-                .pickerStyle(.menu)
-                if graphicDiameterChoice == .manual {
-                    TextField("着色直径（例: 13.2）", text: $graphicDiameterText)
-                        .keyboardType(.decimalPad)
-                }
-
-                Toggle("度あり", isOn: $isPrescription)
-                if isPrescription {
-                    if fixedPowerEnabled {
-                        LabeledContent("度数（左右）") {
-                            let left = resolvedFixedLeftPowerDouble.map { String(format: "%.2f", $0) } ?? "—"
-                            let right = resolvedFixedRightPowerDouble.map { String(format: "%.2f", $0) } ?? "—"
-                            Text("左 \(left) / 右 \(right)")
-                        }
-                    } else {
-                        Group {
-                            Picker("左", selection: $leftPowerChoice) {
-                                Text(DoubleInputChoice.unselected.label).tag(DoubleInputChoice.unselected)
-                                ForEach(powerOptions, id: \.self) { v in
-                                    Text(String(format: "%.2f", v)).tag(DoubleInputChoice.value(v))
-                                }
-                                Text(DoubleInputChoice.manual.label).tag(DoubleInputChoice.manual)
-                            }
-                            .pickerStyle(.menu)
-                            if leftPowerChoice == .manual {
-                                TextField("左（例: -3.25）", text: $leftPowerText)
-                                    .keyboardType(.numbersAndPunctuation)
-                            }
-
-                            Picker("右", selection: $rightPowerChoice) {
-                                Text(DoubleInputChoice.unselected.label).tag(DoubleInputChoice.unselected)
-                                ForEach(powerOptions, id: \.self) { v in
-                                    Text(String(format: "%.2f", v)).tag(DoubleInputChoice.value(v))
-                                }
-                                Text(DoubleInputChoice.manual.label).tag(DoubleInputChoice.manual)
-                            }
-                            .pickerStyle(.menu)
-                            if rightPowerChoice == .manual {
-                                TextField("右（例: -3.25）", text: $rightPowerText)
-                                    .keyboardType(.numbersAndPunctuation)
-                            }
-                        }
-                    }
-                }
-                Text("日数")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Picker("", selection: $replacementPreset) {
-                    ForEach(ReplacementPreset.allCases) { preset in
-                        Text(preset.rawValue).tag(preset)
-                    }
-                }
-                .pickerStyle(.segmented)
-                if replacementPreset == .other {
-                    TextField("日数（例: 45）", text: $replacementDaysText)
-                        .keyboardType(.numberPad)
-                }
-            }
-            .onChange(of: bcChoice) { _, next in
-                if isInitializing { return }
-                if let v = next.doubleValue { bcText = String(format: "%.1f", v) } else { bcText = "" }
-                if next == .manual { bcText = "" }
-            }
-            .onChange(of: diaChoice) { _, next in
-                if isInitializing { return }
-                if let v = next.doubleValue { diaText = String(format: "%.1f", v) } else { diaText = "" }
-                if next == .manual { diaText = "" }
-            }
-            .onChange(of: graphicDiameterChoice) { _, next in
-                if isInitializing { return }
-                if let v = next.doubleValue { graphicDiameterText = String(format: "%.1f", v) } else { graphicDiameterText = "" }
-                if next == .manual { graphicDiameterText = "" }
-            }
-            .onChange(of: leftPowerChoice) { _, next in
-                if isInitializing { return }
-                if let v = next.doubleValue { leftPowerText = String(format: "%.2f", v) } else { leftPowerText = "" }
-                if next == .manual { leftPowerText = "" }
-            }
-            .onChange(of: rightPowerChoice) { _, next in
-                if isInitializing { return }
-                if let v = next.doubleValue { rightPowerText = String(format: "%.2f", v) } else { rightPowerText = "" }
-                if next == .manual { rightPowerText = "" }
-            }
-            .onChange(of: replacementPreset) { _, next in
-                if let days = next.days {
-                    replacementDaysText = String(days)
-                } else {
-                    replacementDaysText = ""
-                }
-            }
-            .onChange(of: isPrescription) { _, next in
-                if next == false {
-                    leftPowerText = ""
-                    rightPowerText = ""
-                    leftPowerChoice = .unselected
-                    rightPowerChoice = .unselected
-                } else if fixedPowerEnabled, let fixedL = resolvedFixedLeftPowerDouble, let fixedR = resolvedFixedRightPowerDouble {
-                    leftPowerText = String(format: "%.2f", fixedL)
-                    rightPowerText = String(format: "%.2f", fixedR)
-                }
-            }
-
-            Section("リピ") {
-                Picker("判断", selection: $repeatDecision) {
-                    ForEach(RepeatDecision.allCases) { decision in
-                        Text(decision.rawValue).tag(decision)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            Section("メモ") {
-                TextField("自由メモ（任意）", text: $memo, axis: .vertical)
-            }
+            nameSection
+            colorCategorySection
+            purchaseSection
+            specSection
+            repeatSection
+            memoSection
         }
         .navigationTitle(editingLens == nil ? "レンズ追加" : "レンズ編集")
         .scrollContentBackground(.hidden)
@@ -458,7 +249,7 @@ struct LensFormView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存") {
                     if isFormValid == false {
-                        validationErrorMessage = "スペック（BC/DIA/着色直径/使用期間）と必須項目を入力してください。"
+                        validationErrorMessage = "ブランド名、商品名、着色直径を入力してください。度ありの場合は左右の度数も必要です。"
                         return
                     }
                     save()
@@ -469,39 +260,35 @@ struct LensFormView: View {
         }
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(AppTheme.background, for: .navigationBar)
-        .alert("入力エラー", isPresented: Binding(
-            get: { validationErrorMessage != nil },
-            set: { isPresented in
-                if isPresented == false { validationErrorMessage = nil }
-            }
-        )) {
+        .alert("入力エラー", isPresented: validationAlertBinding) {
             Button("OK", role: .cancel) { validationErrorMessage = nil }
         } message: {
             Text(validationErrorMessage ?? "")
         }
-        .sheet(isPresented: $showingCamera) {
+        .sheet(isPresented: $showingCamera, onDismiss: {
+            guard let image = pendingCapturedImage else { return }
+            pendingCapturedImage = nil
+            stickerEditingSourceImage = EditableSourceImage(image: image)
+        }) {
             EyeGuideCameraCaptureView(
                 onCapture: { image in
-                    stickerEditingSourceImage = normalizedImage(from: image) ?? image
-                    showingStickerEditor = true
+                    pendingCapturedImage = normalizedImage(from: image) ?? image
                     showingCamera = false
                 },
                 onCancel: { showingCamera = false }
             )
         }
-        .sheet(isPresented: $showingStickerEditor) {
-            if let source = stickerEditingSourceImage {
-                EyeEllipseEditorView(
-                    sourceImage: source,
-                    onCancel: {
-                        showingStickerEditor = false
-                    },
-                    onSave: { data in
-                        stickerEyeJPEGData = data
-                        showingStickerEditor = false
-                    }
-                )
-            }
+        .sheet(item: $stickerEditingSourceImage) { source in
+            EyeEllipseEditorView(
+                sourceImage: source.image,
+                onCancel: {
+                    stickerEditingSourceImage = nil
+                },
+                onSave: { data in
+                    stickerEyeJPEGData = data
+                    stickerEditingSourceImage = nil
+                }
+            )
         }
         .onChange(of: stickerPickerItem) { _, next in
             Task {
@@ -510,8 +297,7 @@ struct LensFormView: View {
                 await MainActor.run {
                     preparingStickerImage = false
                     if let image {
-                        stickerEditingSourceImage = image
-                        showingStickerEditor = true
+                        stickerEditingSourceImage = EditableSourceImage(image: image)
                     }
                 }
             }
@@ -582,8 +368,263 @@ struct LensFormView: View {
         } header: {
             Text("写真")
         } footer: {
-            Text("枠に合わせて撮影 → カード向けの四角形で切り抜いて、図鑑の代表画像として表示します。")
+            Text("枠に合わせて撮影。図鑑の代表写真にします。")
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var nameSection: some View {
+        Section("名称") {
+            TextField("ブランド", text: $brand)
+            TextField("商品名", text: $productName)
+            TextField("カラー", text: $colorName)
+        }
+    }
+
+    private var purchaseSection: some View {
+        Section("購入") {
+            TextField("購入場所", text: $purchasePlace)
+                .focused($isPurchasePlaceFocused)
+
+            if isPurchasePlaceFocused, purchasePlaceSuggestions.isEmpty == false {
+                purchasePlaceSuggestionsView
+            }
+        }
+    }
+
+    private var purchasePlaceSuggestionsView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("履歴")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            LazyVGrid(columns: purchasePlaceGridColumns, alignment: .leading, spacing: 8) {
+                ForEach(purchasePlaceSuggestions, id: \.self) { suggestion in
+                    purchasePlaceSuggestionButton(suggestion)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func purchasePlaceSuggestionButton(_ suggestion: String) -> some View {
+        Button(suggestion) {
+            purchasePlace = suggestion
+            isPurchasePlaceFocused = false
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+    }
+
+    private var specSection: some View {
+        Section("スペック") {
+            doubleChoicePicker(
+                title: "着色直径",
+                selection: $graphicDiameterChoice,
+                options: graphicDiameterChoiceOptions,
+                text: $graphicDiameterText,
+                placeholder: "着色直径（例: 13.2）"
+            )
+            doubleChoicePicker(
+                title: "BC",
+                selection: $bcChoice,
+                options: bcChoiceOptions,
+                text: $bcText,
+                placeholder: "BC（例: 8.6）"
+            )
+            doubleChoicePicker(
+                title: "DIA",
+                selection: $diaChoice,
+                options: diaChoiceOptions,
+                text: $diaText,
+                placeholder: "DIA（例: 14.2）"
+            )
+
+            waterContentPicker
+
+            Toggle("度あり", isOn: $isPrescription)
+            if isPrescription {
+                prescriptionPowerSection
+            }
+
+            replacementDaysSection
+        }
+        .onChange(of: bcChoice) { _, next in
+            if isInitializing { return }
+            if let v = next.doubleValue { bcText = String(format: "%.1f", v) } else { bcText = "" }
+            if next == .manual { bcText = "" }
+        }
+        .onChange(of: diaChoice) { _, next in
+            if isInitializing { return }
+            if let v = next.doubleValue { diaText = String(format: "%.1f", v) } else { diaText = "" }
+            if next == .manual { diaText = "" }
+        }
+        .onChange(of: graphicDiameterChoice) { _, next in
+            if isInitializing { return }
+            if let v = next.doubleValue { graphicDiameterText = String(format: "%.1f", v) } else { graphicDiameterText = "" }
+            if next == .manual { graphicDiameterText = "" }
+        }
+        .onChange(of: leftPowerChoice) { _, next in
+            if isInitializing { return }
+            if let v = next.doubleValue { leftPowerText = String(format: "%.2f", v) } else { leftPowerText = "" }
+            if next == .manual { leftPowerText = "" }
+        }
+        .onChange(of: rightPowerChoice) { _, next in
+            if isInitializing { return }
+            if let v = next.doubleValue { rightPowerText = String(format: "%.2f", v) } else { rightPowerText = "" }
+            if next == .manual { rightPowerText = "" }
+        }
+        .onChange(of: replacementPreset) { _, next in
+            if let days = next.days {
+                replacementDaysText = String(days)
+            } else {
+                replacementDaysText = ""
+            }
+        }
+        .onChange(of: isPrescription) { _, next in
+            if next == false {
+                leftPowerText = ""
+                rightPowerText = ""
+                leftPowerChoice = .unselected
+                rightPowerChoice = .unselected
+            } else if fixedPowerEnabled, let fixedL = resolvedFixedLeftPowerDouble, let fixedR = resolvedFixedRightPowerDouble {
+                leftPowerText = String(format: "%.2f", fixedL)
+                rightPowerText = String(format: "%.2f", fixedR)
+            }
+        }
+    }
+
+    private var repeatSection: some View {
+        Section("リピ") {
+            Picker("判断", selection: $repeatDecision) {
+                ForEach(RepeatDecision.allCases) { decision in
+                    Text(decision.rawValue).tag(decision)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private var memoSection: some View {
+        Section("メモ") {
+            TextField("自由メモ（任意）", text: $memo, axis: .vertical)
+        }
+    }
+
+    private var colorCategorySection: some View {
+        Section("カラー分類") {
+            Picker("分類", selection: $colorCategorySelection) {
+                Text("選択する").tag(Optional<LensColorCategory>.none)
+                ForEach(selectableColorCategories) { category in
+                    colorCategoryOptionView(for: category)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var prescriptionPowerSection: some View {
+        if fixedPowerEnabled {
+            LabeledContent("度数（左右）") {
+                Text(fixedPowerSummaryText)
+            }
+        } else {
+            powerChoicePicker(
+                title: "左",
+                selection: $leftPowerChoice,
+                text: $leftPowerText,
+                placeholder: "左（例: -3.25）"
+            )
+            powerChoicePicker(
+                title: "右",
+                selection: $rightPowerChoice,
+                text: $rightPowerText,
+                placeholder: "右（例: -3.25）"
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var replacementDaysSection: some View {
+        Text("日数")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+
+        Picker("", selection: $replacementPreset) {
+            ForEach(ReplacementPreset.allCases) { preset in
+                Text(preset.rawValue).tag(preset)
+            }
+        }
+        .pickerStyle(.segmented)
+
+        if replacementPreset == .other {
+            TextField("日数（例: 45）", text: $replacementDaysText)
+                .keyboardType(.numberPad)
+        }
+    }
+
+    private var waterContentPicker: some View {
+        Picker("含水率", selection: $waterContentCategorySelection) {
+            ForEach(waterContentChoiceOptions, id: \.self) { category in
+                waterContentOptionView(for: category)
+            }
+        }
+        .pickerStyle(.menu)
+    }
+
+    private var fixedPowerSummaryText: String {
+        let left = resolvedFixedLeftPowerDouble.map { String(format: "%.2f", $0) } ?? "—"
+        let right = resolvedFixedRightPowerDouble.map { String(format: "%.2f", $0) } ?? "—"
+        return "左 \(left) / 右 \(right)"
+    }
+
+    private func waterContentOptionView(for category: LensWaterContentCategory?) -> some View {
+        let label = category.map(\.rawValue) ?? "選択する"
+        return Text(label).tag(category)
+    }
+
+    private func colorCategoryOptionView(for category: LensColorCategory) -> some View {
+        Text(category.rawValue).tag(Optional(category))
+    }
+
+    @ViewBuilder
+    private func doubleChoicePicker(
+        title: String,
+        selection: Binding<DoubleInputChoice>,
+        options: [DoubleInputChoice],
+        text: Binding<String>,
+        placeholder: String
+    ) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(options) { choice in
+                Text(choice.label).tag(choice)
+            }
+        }
+        .pickerStyle(.menu)
+
+        if selection.wrappedValue == .manual {
+            TextField(placeholder, text: text)
+                .keyboardType(.decimalPad)
+        }
+    }
+
+    @ViewBuilder
+    private func powerChoicePicker(
+        title: String,
+        selection: Binding<DoubleInputChoice>,
+        text: Binding<String>,
+        placeholder: String
+    ) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(powerChoiceOptions) { choice in
+                Text(choice.label).tag(choice)
+            }
+        }
+        .pickerStyle(.menu)
+
+        if selection.wrappedValue == .manual {
+            TextField(placeholder, text: text)
+                .keyboardType(.numbersAndPunctuation)
         }
     }
 
@@ -600,6 +641,7 @@ struct LensFormView: View {
         lens.productName = productName
         lens.colorName = colorName
         lens.colorCategory = colorCategorySelection ?? .other
+        lens.waterContentCategory = waterContentCategorySelection
         lens.purchasePlace = purchasePlace
         lens.bc = bc
         lens.dia = dia
@@ -628,6 +670,7 @@ struct LensFormView: View {
         productName = lens.productName
         colorName = lens.colorName
         colorCategorySelection = lens.colorCategory
+        waterContentCategorySelection = lens.waterContentCategory
         purchasePlace = lens.purchasePlace
 
         bcText = lens.bc.map { String(format: "%.1f", $0) } ?? ""
@@ -656,94 +699,6 @@ struct LensFormView: View {
             replacementPreset = replacementPreset(for: days)
         } else {
             replacementPreset = .other
-        }
-    }
-
-    private func lookupSpecs() async {
-        aiLookupMessage = nil
-        aiLookupErrorMessage = nil
-        aiLookupSourceURL = nil
-
-        guard aiSpecLookupEnabled else {
-            aiLookupErrorMessage = "設定でAI自動入力をONにしてください。"
-            return
-        }
-
-        let endpoint = AppConfig.aiSpecLookupEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard endpoint.isEmpty == false else {
-            aiLookupErrorMessage = "AIサーバーの接続先が未設定です。開発者が AppConfig を設定する必要があります。"
-            return
-        }
-
-        guard aiSpecLookupQuery.isEmpty == false else {
-            aiLookupErrorMessage = "ブランド名と商品名を入れてから試してください。"
-            return
-        }
-
-        isLookingUpSpecs = true
-        defer { isLookingUpSpecs = false }
-
-        do {
-            let result = try await LensSpecLookupService.lookup(
-                endpoint: endpoint,
-                query: aiSpecLookupQuery,
-                colorName: colorName
-            )
-            applyLookupResult(result)
-            aiLookupSourceURL = result.sourceURL?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            let note = result.note?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let note, note.isEmpty == false {
-                aiLookupMessage = "AI候補を反映しました。保存前に商品ページも確認してください。\(note)"
-            } else {
-                aiLookupMessage = "AI候補を反映しました。保存前に商品ページも確認してください。"
-            }
-        } catch {
-            aiLookupErrorMessage = error.localizedDescription
-        }
-    }
-
-    private func applyLookupResult(_ result: LensSpecLookupResult) {
-        let previousInitializing = isInitializing
-        isInitializing = true
-        defer { isInitializing = previousInitializing }
-
-        if let normalizedBrand = result.brand?.trimmingCharacters(in: .whitespacesAndNewlines), normalizedBrand.isEmpty == false, brand.isEmpty {
-            brand = normalizedBrand
-        }
-
-        if let bc = result.bc {
-            applyDoubleLookupValue(bc, to: &bcChoice, text: &bcText, options: bcOptions)
-        }
-        if let dia = result.dia {
-            applyDoubleLookupValue(dia, to: &diaChoice, text: &diaText, options: diaOptions)
-        }
-        if let graphicDiameter = result.graphicDiameter {
-            applyDoubleLookupValue(graphicDiameter, to: &graphicDiameterChoice, text: &graphicDiameterText, options: graphicDiameterOptions)
-        }
-
-        if let replacementDays = result.replacementDays {
-            let preset = replacementPreset(for: replacementDays)
-            replacementPreset = preset
-            if preset == .other {
-                replacementDaysText = String(replacementDays)
-            }
-        }
-    }
-
-    private func applyDoubleLookupValue(
-        _ value: Double,
-        to choice: inout DoubleInputChoice,
-        text: inout String,
-        options: [Double]
-    ) {
-        let rounded = (value * 10).rounded() / 10
-        if options.contains(where: { abs($0 - rounded) < 0.001 }) {
-            choice = .value(rounded)
-            text = String(format: "%.1f", rounded)
-        } else {
-            choice = .manual
-            text = String(format: "%.1f", rounded)
         }
     }
 
@@ -877,7 +832,7 @@ private struct EyeEllipseEditorView: View {
 
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .stroke(Color.white.opacity(0.95), lineWidth: 2)
-                                .frame(width: viewWidth * 0.92, height: viewHeight * 0.86)
+                                .frame(width: viewWidth, height: viewHeight)
                                 .allowsHitTesting(false)
                         }
                         .frame(width: viewWidth, height: viewHeight)
@@ -952,9 +907,9 @@ private struct EyeEllipseEditorView: View {
     }
 
     private func clamp(in cropSize: CGSize) {
-        let movePadding: CGFloat = 60
-        let maxX = max(movePadding, (cropSize.width * scale - cropSize.width) * 0.5 + movePadding)
-        let maxY = max(movePadding, (cropSize.height * scale - cropSize.height) * 0.5 + movePadding)
+        let base = aspectFillRect(contentSize: sourceImage.size, boundsSize: cropSize)
+        let maxX = max(0, (base.width * scale - cropSize.width) * 0.5)
+        let maxY = max(0, (base.height * scale - cropSize.height) * 0.5)
         offset.width = min(max(offset.width, -maxX), maxX)
         offset.height = min(max(offset.height, -maxY), maxY)
     }
@@ -971,14 +926,7 @@ private struct EyeEllipseEditorView: View {
             UIColor.white.setFill()
             ctx.fill(CGRect(origin: .zero, size: canvasSize))
 
-            let clipWidth = canvasSize.width * 0.92
-            let clipHeight = canvasSize.height * 0.86
-            let clipRect = CGRect(
-                x: (canvasSize.width - clipWidth) * 0.5,
-                y: (canvasSize.height - clipHeight) * 0.5,
-                width: clipWidth,
-                height: clipHeight
-            )
+            let clipRect = CGRect(origin: .zero, size: canvasSize)
             let clipPath = UIBezierPath(roundedRect: clipRect, cornerRadius: 36)
             clipPath.addClip()
 
@@ -1048,7 +996,6 @@ private struct EyeGuideCameraCaptureView: View {
                 Button {
                     camera.capture { image in
                         guard let image else { return }
-                        camera.stop()
                         onCapture(image)
                     }
                 } label: {
@@ -1114,16 +1061,15 @@ private struct EyeGuideOverlay: View {
                     .frame(width: ovalRect.width, height: ovalRect.height)
                     .position(x: ovalRect.midX, y: ovalRect.midY)
 
-                VStack(spacing: 6) {
-                    Text("枠に目を合わせて撮影")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Text("撮影後に楕円形で切り抜きます")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 90)
+                Text("枠に目を合わせたらカメラ目線にしてください")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .position(
+                        x: size.width * 0.5,
+                        y: min(size.height - 72, ovalRect.maxY + 44)
+                    )
             }
         }
     }
@@ -1151,7 +1097,9 @@ private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptu
     let session = AVCaptureSession()
     @Published private(set) var isReady = false
     @Published private(set) var isCapturing = false
+    @Published private(set) var isWarmedUp = false
 
+    private let startupStabilizationDelay: TimeInterval = 1.5
     private let output = AVCapturePhotoOutput()
     private let sessionQueue = DispatchQueue(label: "LensFormView.CameraModel.session")
     private var onCapture: ((UIImage?) -> Void)?
@@ -1159,24 +1107,27 @@ private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptu
     private var isConfigured = false
 
     var isCaptureButtonEnabled: Bool {
-        isReady && isCapturing == false
+        isReady && isWarmedUp && isCapturing == false
     }
 
     func start() {
         Task { @MainActor in
             isReady = false
             isCapturing = false
+            isWarmedUp = false
         }
 
         sessionQueue.async {
             self.configureSessionIfNeeded()
             guard self.session.isRunning == false else {
                 Task { @MainActor in self.isReady = true }
+                self.markWarmupCompletion()
                 return
             }
 
             self.session.startRunning()
             Task { @MainActor in self.isReady = self.session.isRunning }
+            self.markWarmupCompletion()
         }
     }
 
@@ -1184,6 +1135,7 @@ private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptu
         Task { @MainActor in
             isReady = false
             isCapturing = false
+            isWarmedUp = false
         }
 
         sessionQueue.async {
@@ -1220,22 +1172,15 @@ private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptu
     }
 
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        defer {
-            Task { @MainActor in
-                self.isCapturing = false
-                self.isReady = self.session.isRunning
-            }
-            onCapture = nil
-        }
         guard error == nil else {
-            onCapture?(nil)
+            finishCapture(with: nil)
             return
         }
         guard let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else {
-            onCapture?(nil)
+            finishCapture(with: nil)
             return
         }
-        onCapture?(correctedImageIfNeeded(image))
+        finishCapture(with: correctedImageIfNeeded(image))
     }
 
     private func configureSessionIfNeeded() {
@@ -1252,6 +1197,7 @@ private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptu
             session.commitConfiguration()
             return
         }
+        configure(device: device)
         activeCameraPosition = device.position
 
         guard let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
@@ -1271,9 +1217,49 @@ private final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptu
         isConfigured = true
     }
 
+    private func markWarmupCompletion() {
+        let delay = DispatchTime.now() + startupStabilizationDelay
+        sessionQueue.asyncAfter(deadline: delay) {
+            Task { @MainActor in
+                guard self.session.isRunning else { return }
+                self.isWarmedUp = true
+            }
+        }
+    }
+
+    private func configure(device: AVCaptureDevice) {
+        guard (try? device.lockForConfiguration()) != nil else { return }
+        defer { device.unlockForConfiguration() }
+
+        if device.isFocusModeSupported(.continuousAutoFocus) {
+            device.focusMode = .continuousAutoFocus
+        }
+        if device.isSmoothAutoFocusSupported {
+            device.isSmoothAutoFocusEnabled = true
+        }
+        if device.isExposureModeSupported(.continuousAutoExposure) {
+            device.exposureMode = .continuousAutoExposure
+        }
+        if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+            device.whiteBalanceMode = .continuousAutoWhiteBalance
+        }
+        device.isSubjectAreaChangeMonitoringEnabled = true
+    }
+
     private func correctedImageIfNeeded(_ image: UIImage) -> UIImage {
         guard activeCameraPosition == .front else { return image }
         return horizontallyFlippedImage(from: image) ?? image
+    }
+
+    private func finishCapture(with image: UIImage?) {
+        let completion = onCapture
+        onCapture = nil
+
+        Task { @MainActor in
+            self.isCapturing = false
+            self.isReady = self.session.isRunning
+            completion?(image)
+        }
     }
 
     private func horizontallyFlippedImage(from image: UIImage) -> UIImage? {

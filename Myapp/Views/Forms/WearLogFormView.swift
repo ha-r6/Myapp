@@ -249,7 +249,7 @@ private struct LensSelectableCard: View {
     var body: some View {
         let cardWidth: CGFloat = 180
         ZStack {
-            LensStickerCard(lens: lens)
+            LensStickerCard(lens: lens, paletteIndex: nil)
                 .scaleEffect(0.94)
                 .frame(width: cardWidth)
 

@@ -35,16 +35,21 @@ enum AppTheme {
     }
 
     static func pastelColor(seed: String) -> Color {
-        let palette: [Color] = [
-            Color(red: 0.97, green: 0.65, blue: 0.79), // pink
-            Color(red: 0.80, green: 0.72, blue: 0.98), // lavender
-            Color(red: 0.99, green: 0.80, blue: 0.61), // peach
-            Color(red: 0.72, green: 0.90, blue: 0.86), // mint
-            Color(red: 0.76, green: 0.86, blue: 0.99), // sky
-            Color(red: 0.92, green: 0.88, blue: 0.99), // lilac
-        ]
-        return palette[seededValue(seed: seed, modulo: palette.count)]
+        pastelPalette[seededValue(seed: seed, modulo: pastelPalette.count)]
     }
+
+    static func pastelColor(index: Int) -> Color {
+        pastelPalette[abs(index) % pastelPalette.count]
+    }
+
+    private static let pastelPalette: [Color] = [
+        Color(red: 0.97, green: 0.74, blue: 0.82), // pink
+        Color(red: 0.99, green: 0.83, blue: 0.67), // peach
+        Color(red: 0.76, green: 0.90, blue: 0.86), // mint
+        Color(red: 0.76, green: 0.86, blue: 0.99), // sky
+        Color(red: 0.84, green: 0.78, blue: 0.97), // lavender
+        Color(red: 0.98, green: 0.84, blue: 0.86), // rose
+    ]
 }
 
 struct CardModifier: ViewModifier {

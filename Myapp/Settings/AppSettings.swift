@@ -24,7 +24,6 @@ enum AppSettingsKeys {
     static let recentPurchasePlaces = "recentPurchasePlaces"
     static let lastLeftPower = "lastLeftPower"
     static let lastRightPower = "lastRightPower"
-    static let aiSpecLookupEnabled = "aiSpecLookupEnabled"
 }
 
 struct SetupGateViewModifier: ViewModifier {

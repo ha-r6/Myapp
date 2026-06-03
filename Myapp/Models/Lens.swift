@@ -11,6 +11,13 @@ enum LensColorCategory: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 }
 
+enum LensWaterContentCategory: String, CaseIterable, Identifiable, Codable {
+    case under50 = "50%未満"
+    case overOrEqual50 = "50%以上"
+
+    var id: String { rawValue }
+}
+
 struct Lens: Identifiable, Codable, Hashable {
     var id: UUID = UUID()
     var createdAt: Date = .now
@@ -20,6 +27,7 @@ struct Lens: Identifiable, Codable, Hashable {
     var colorName: String = ""
 
     var colorCategoryRaw: String = LensColorCategory.other.rawValue
+    var waterContentCategoryRaw: String? = nil
 
     var bc: Double? = nil
     var dia: Double? = nil
@@ -57,6 +65,14 @@ struct Lens: Identifiable, Codable, Hashable {
     var colorCategory: LensColorCategory {
         get { LensColorCategory(rawValue: colorCategoryRaw) ?? .other }
         set { colorCategoryRaw = newValue.rawValue }
+    }
+
+    var waterContentCategory: LensWaterContentCategory? {
+        get {
+            guard let raw = waterContentCategoryRaw else { return nil }
+            return LensWaterContentCategory(rawValue: raw)
+        }
+        set { waterContentCategoryRaw = newValue?.rawValue }
     }
 }
 

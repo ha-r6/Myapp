@@ -89,13 +89,81 @@ enum LensSpecLookupServiceError: LocalizedError {
         case .invalidResponse:
             return "AIサーバーからの応答を読み取れませんでした。"
         case .httpStatus(let status, let body):
-            if let body, body.isEmpty == false {
-                return "AIサーバーでエラーが発生しました（\(status)）。\(body)"
-            }
-            return "AIサーバーでエラーが発生しました（\(status)）。"
+            return LensSpecLookupErrorMessageBuilder.message(for: status, body: body)
         case .decodingFailed:
             return "AIの返答をスペックとして読み取れませんでした。"
         }
+    }
+}
+
+private struct LensSpecLookupServerErrorEnvelope: Decodable {
+    let note: String?
+    let detail: String?
+}
+
+private struct LensSpecLookupGeminiErrorEnvelope: Decodable {
+    let error: LensSpecLookupGeminiErrorDetail?
+}
+
+private struct LensSpecLookupGeminiErrorDetail: Decodable {
+    let code: Int?
+    let message: String?
+    let status: String?
+}
+
+private enum LensSpecLookupErrorMessageBuilder {
+    static func message(for status: Int, body: String?) -> String {
+        let payload = parsePayload(from: body)
+        let searchableText = [payload.note, payload.detail]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: "\n")
+
+        if status == 502,
+           searchableText.contains("503")
+            || searchableText.contains("unavailable")
+            || searchableText.contains("high demand") {
+            return "AIが混み合っています。少し待ってからもう一度お試しください。"
+        }
+
+        if status == 429 || searchableText.contains("quota") || searchableText.contains("rate limit") {
+            return "AIの利用が一時的に集中しています。時間をおいてもう一度お試しください。"
+        }
+
+        if let note = payload.note, note.isEmpty == false, note.hasPrefix("Gemini error:") == false {
+            return "AIサーバーでエラーが発生しました（\(status)）。\(note)"
+        }
+
+        return "AIサーバーでエラーが発生しました（\(status)）。しばらくしてからもう一度お試しください。"
+    }
+
+    private static func parsePayload(from body: String?) -> (note: String?, detail: String?) {
+        guard let body, body.isEmpty == false else {
+            return (nil, nil)
+        }
+
+        if let envelope = try? JSONDecoder().decode(LensSpecLookupServerErrorEnvelope.self, from: Data(body.utf8)) {
+            let detail = normalizedDetail(from: envelope.detail) ?? envelope.detail
+            return (envelope.note?.trimmingCharacters(in: .whitespacesAndNewlines), detail?.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        return (nil, body.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static func normalizedDetail(from detail: String?) -> String? {
+        guard let detail, detail.isEmpty == false else { return nil }
+        guard let data = detail.data(using: .utf8),
+              let envelope = try? JSONDecoder().decode(LensSpecLookupGeminiErrorEnvelope.self, from: data) else {
+            return detail
+        }
+
+        let parts = [
+            envelope.error?.status,
+            envelope.error?.message
+        ]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+
+        return parts.isEmpty ? detail : parts.joined(separator: ": ")
     }
 }
 

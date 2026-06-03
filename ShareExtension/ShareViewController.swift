@@ -74,7 +74,7 @@ final class ShareViewController: UIViewController {
 
     private func loadAndRender() {
         let targetDay = resolveTargetDay()
-        subtitleLabel.text = DateFormatter.localizedString(from: targetDay, dateStyle: .medium, timeStyle: .none)
+        subtitleLabel.text = Self.japaneseDayFormatter.string(from: targetDay)
 
         let payload = loadStorePayload()
         let dayLogs = payload.wearLogs.filter { Calendar.current.isDate($0.day, inSameDayAs: targetDay) }
@@ -109,45 +109,117 @@ final class ShareViewController: UIViewController {
             return Calendar.current.startOfDay(for: Date())
         }
 
-        let providers = attachments
         let group = DispatchGroup()
         var resolvedDate: Date?
 
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+        for provider in attachments where provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
             group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
-                defer { group.leave() }
-                if let url = item as? URL,
-                   let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-                   let metadata = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-                   let date = Self.extractDate(from: metadata) {
-                    resolvedDate = Calendar.current.startOfDay(for: date)
-                    return
-                }
-                if let image = item as? UIImage,
-                   let data = image.jpegData(compressionQuality: 1.0),
-                   let source = CGImageSourceCreateWithData(data as CFData, nil),
-                   let metadata = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-                   let date = Self.extractDate(from: metadata) {
+            resolveCaptureDate(from: provider) { date in
+                if let date, resolvedDate == nil {
                     resolvedDate = Calendar.current.startOfDay(for: date)
                 }
+                group.leave()
             }
             break
         }
 
-        _ = group.wait(timeout: .now() + 1.2)
+        _ = group.wait(timeout: .now() + 2.5)
         return resolvedDate ?? Calendar.current.startOfDay(for: Date())
+    }
+
+    private func resolveCaptureDate(from provider: NSItemProvider, completion: @escaping (Date?) -> Void) {
+        let candidateTypes: [UTType] = [.heic, .jpeg, .png, .image]
+        loadCaptureDateUsingFileRepresentation(from: provider, candidateTypes: candidateTypes) { date in
+            if let date {
+                completion(date)
+                return
+            }
+
+            provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
+                if let url = item as? URL,
+                   let date = Self.captureDate(fromImageAt: url) {
+                    completion(date)
+                    return
+                }
+
+                if let image = item as? UIImage,
+                   let data = image.jpegData(compressionQuality: 1.0),
+                   let date = Self.captureDate(fromImageData: data) {
+                    completion(date)
+                    return
+                }
+
+                completion(nil)
+            }
+        }
+    }
+
+    private func loadCaptureDateUsingFileRepresentation(
+        from provider: NSItemProvider,
+        candidateTypes: [UTType],
+        completion: @escaping (Date?) -> Void
+    ) {
+        guard let type = candidateTypes.first(where: { provider.hasItemConformingToTypeIdentifier($0.identifier) }) else {
+            completion(nil)
+            return
+        }
+
+        provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { url, _ in
+            if let url, let date = Self.captureDate(fromImageAt: url) {
+                completion(date)
+                return
+            }
+
+            let remaining = candidateTypes.filter { $0 != type }
+            if remaining.isEmpty {
+                completion(nil)
+            } else {
+                self.loadCaptureDateUsingFileRepresentation(from: provider, candidateTypes: remaining, completion: completion)
+            }
+        }
+    }
+
+    private static func captureDate(fromImageAt url: URL) -> Date? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let metadata = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return nil
+        }
+        if let date = extractDate(from: metadata) {
+            return date
+        }
+        let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        return values?.creationDate ?? values?.contentModificationDate
+    }
+
+    private static func captureDate(fromImageData data: Data) -> Date? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let metadata = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return nil
+        }
+        return extractDate(from: metadata)
     }
 
     private static func extractDate(from metadata: [CFString: Any]) -> Date? {
         let exif = metadata[kCGImagePropertyExifDictionary] as? [CFString: Any]
-        guard let raw = exif?[kCGImagePropertyExifDateTimeOriginal] as? String ?? exif?[kCGImagePropertyExifDateTimeDigitized] as? String else {
+        let tiff = metadata[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+        guard let raw = exif?[kCGImagePropertyExifDateTimeOriginal] as? String
+            ?? exif?[kCGImagePropertyExifDateTimeDigitized] as? String
+            ?? tiff?[kCGImagePropertyTIFFDateTime] as? String else {
             return nil
         }
         let df = DateFormatter()
         df.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        df.locale = Locale(identifier: "en_US_POSIX")
         return df.date(from: raw)
     }
+
+    private static let japaneseDayFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "ja_JP")
+        df.dateStyle = .medium
+        df.timeStyle = .none
+        return df
+    }()
 
     private func loadStorePayload() -> StorePayload {
         guard let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroupId)?
@@ -162,26 +234,30 @@ final class ShareViewController: UIViewController {
     private func addLensCard(_ lens: ShareLens) {
         let card = UIView()
         card.backgroundColor = UIColor.systemBackground
-        card.layer.cornerRadius = 16
+        card.layer.cornerRadius = 22
+        card.layer.borderWidth = 1
+        card.layer.borderColor = UIColor.black.withAlphaComponent(0.10).cgColor
 
         let imageArea = UIView()
-        imageArea.backgroundColor = UIColor.systemGray6
-        imageArea.layer.cornerRadius = 12
+        imageArea.backgroundColor = backgroundAccentColor(for: lens).withAlphaComponent(0.10)
+        imageArea.layer.cornerRadius = 18
         imageArea.clipsToBounds = true
         imageArea.translatesAutoresizingMaskIntoConstraints = false
+        imageArea.layer.borderWidth = 1
+        imageArea.layer.borderColor = UIColor.black.withAlphaComponent(0.10).cgColor
 
         if let data = lens.stickerEyeJPEG, let image = UIImage(data: data) {
             let iv = UIImageView(image: image)
-            iv.contentMode = .scaleAspectFill
+            iv.contentMode = .scaleAspectFit
             iv.clipsToBounds = true
-            iv.layer.cornerRadius = 10
+            iv.layer.cornerRadius = 14
             iv.translatesAutoresizingMaskIntoConstraints = false
             imageArea.addSubview(iv)
             NSLayoutConstraint.activate([
-                iv.leadingAnchor.constraint(equalTo: imageArea.leadingAnchor),
-                iv.trailingAnchor.constraint(equalTo: imageArea.trailingAnchor),
-                iv.topAnchor.constraint(equalTo: imageArea.topAnchor),
-                iv.bottomAnchor.constraint(equalTo: imageArea.bottomAnchor),
+                iv.leadingAnchor.constraint(equalTo: imageArea.leadingAnchor, constant: 8),
+                iv.trailingAnchor.constraint(equalTo: imageArea.trailingAnchor, constant: -8),
+                iv.topAnchor.constraint(equalTo: imageArea.topAnchor, constant: 8),
+                iv.bottomAnchor.constraint(equalTo: imageArea.bottomAnchor, constant: -8),
             ])
         } else {
             let empty = UILabel()
@@ -202,59 +278,159 @@ final class ShareViewController: UIViewController {
         brand.font = .preferredFont(forTextStyle: .caption1)
 
         let title = UILabel()
-        title.text = lens.displayName
-        title.numberOfLines = 2
-        title.font = .preferredFont(forTextStyle: .headline)
+        title.numberOfLines = 1
+        title.adjustsFontSizeToFitWidth = true
+        title.minimumScaleFactor = 0.78
+        title.attributedText = makeTitleText(productName: lens.productNameDisplay, colorName: lens.colorName.trimmedOrNil)
 
-        let pillRow = UIStackView()
+        let pillRow = UIStackView(arrangedSubviews: [
+            makePill(lens.colorCategoryRaw, color: pillColor(for: lens.colorCategoryRaw)),
+            makePill(lens.repeatDecisionRaw, color: pillColor(for: lens.repeatDecisionRaw))
+        ])
         pillRow.axis = .horizontal
-        pillRow.spacing = 8
-        pillRow.alignment = .leading
+        pillRow.spacing = 6
+        pillRow.alignment = .fill
+        pillRow.distribution = .fillEqually
 
         if let gd = lens.graphicDiameter {
-            pillRow.addArrangedSubview(makePill("着色直径 \(String(format: "%.1f", gd))mm"))
+            let diameterRow = UIStackView(arrangedSubviews: [
+                makePill("着色直径 \(String(format: "%.1f", gd))mm", color: graphicDiameterPillColor(for: gd)),
+                UIView()
+            ])
+            diameterRow.axis = .horizontal
+            diameterRow.spacing = 8
+            diameterRow.alignment = .fill
+            diameterRow.distribution = .fill
+            let v = UIStackView(arrangedSubviews: [imageArea, brand, title, diameterRow, pillRow])
+            v.axis = .vertical
+            v.spacing = 10
+            v.translatesAutoresizingMaskIntoConstraints = false
+
+            card.addSubview(v)
+            NSLayoutConstraint.activate([
+                v.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+                v.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+                v.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+                v.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
+                imageArea.heightAnchor.constraint(equalToConstant: 126),
+            ])
+
+            stackView.addArrangedSubview(card)
+            return
         }
-        pillRow.addArrangedSubview(makePill(lens.colorCategoryRaw))
-        pillRow.addArrangedSubview(makePill(lens.repeatDecisionRaw))
 
         let v = UIStackView(arrangedSubviews: [imageArea, brand, title, pillRow])
         v.axis = .vertical
-        v.spacing = 8
+        v.spacing = 10
         v.translatesAutoresizingMaskIntoConstraints = false
 
         card.addSubview(v)
         NSLayoutConstraint.activate([
-            v.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
-            v.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            v.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
-            v.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
-            imageArea.heightAnchor.constraint(equalToConstant: 124),
+            v.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            v.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            v.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+            v.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
+            imageArea.heightAnchor.constraint(equalToConstant: 126),
         ])
 
         stackView.addArrangedSubview(card)
     }
 
-    private func makePill(_ text: String) -> UIView {
+    private func makePill(_ text: String, color: UIColor) -> UIView {
         let label = UILabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: .caption2)
         label.textColor = .label
-        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.textAlignment = .center
+        label.numberOfLines = 1
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.82
 
         let container = UIView()
-        container.backgroundColor = UIColor.systemGray6
-        container.layer.cornerRadius = 12
+        container.backgroundColor = color.withAlphaComponent(0.24)
+        container.layer.cornerRadius = 15
+        container.layer.borderWidth = 1
+        container.layer.borderColor = color.withAlphaComponent(0.45).cgColor
         container.translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 5),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -5),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
+            container.heightAnchor.constraint(greaterThanOrEqualToConstant: 30),
         ])
         return container
+    }
+
+    private func makeTitleText(productName: String, colorName: String?) -> NSAttributedString {
+        let title = NSMutableAttributedString(
+            string: productName,
+            attributes: [
+                .font: UIFont.preferredFont(forTextStyle: .headline),
+                .foregroundColor: UIColor.label
+            ]
+        )
+        if let colorName, colorName.isEmpty == false {
+            title.append(
+                NSAttributedString(
+                    string: " \(colorName)",
+                    attributes: [
+                        .font: UIFont.preferredFont(forTextStyle: .caption1),
+                        .foregroundColor: UIColor.secondaryLabel
+                    ]
+                )
+            )
+        }
+        return title
+    }
+
+    private func backgroundAccentColor(for lens: ShareLens) -> UIColor {
+        let palette: [UIColor] = [
+            UIColor(red: 0.97, green: 0.74, blue: 0.82, alpha: 1),
+            UIColor(red: 0.99, green: 0.83, blue: 0.67, alpha: 1),
+            UIColor(red: 0.76, green: 0.90, blue: 0.86, alpha: 1),
+            UIColor(red: 0.76, green: 0.86, blue: 0.99, alpha: 1),
+            UIColor(red: 0.84, green: 0.78, blue: 0.97, alpha: 1),
+            UIColor(red: 0.98, green: 0.84, blue: 0.86, alpha: 1),
+        ]
+        return palette[abs(lens.id.uuidString.hashValue) % palette.count]
+    }
+
+    private func graphicDiameterPillColor(for value: Double) -> UIColor {
+        switch value {
+        case ..<13.0:
+            return UIColor(red: 0.84, green: 0.78, blue: 0.97, alpha: 1)
+        case 13.0..<13.5:
+            return UIColor(red: 0.98, green: 0.79, blue: 0.87, alpha: 1)
+        default:
+            return UIColor(red: 0.99, green: 0.83, blue: 0.67, alpha: 1)
+        }
+    }
+
+    private func pillColor(for rawValue: String) -> UIColor {
+        switch rawValue {
+        case "ブラック系":
+            return UIColor(red: 0.74, green: 0.76, blue: 0.80, alpha: 1)
+        case "ブラウン系":
+            return UIColor(red: 0.82, green: 0.69, blue: 0.56, alpha: 1)
+        case "グレー系":
+            return UIColor(red: 0.70, green: 0.85, blue: 0.96, alpha: 1)
+        case "オリーブ系":
+            return UIColor(red: 0.77, green: 0.88, blue: 0.50, alpha: 1)
+        case "その他":
+            return UIColor(red: 0.88, green: 0.72, blue: 0.90, alpha: 1)
+        case "リピあり":
+            return UIColor(red: 0.98, green: 0.72, blue: 0.84, alpha: 1)
+        case "リピなし":
+            return UIColor(red: 0.69, green: 0.88, blue: 0.98, alpha: 1)
+        case "迷う":
+            return UIColor(red: 0.98, green: 0.90, blue: 0.56, alpha: 1)
+        default:
+            return backgroundAccentColor(for: ShareLens.placeholder)
+        }
     }
 
     private func addEmptyCard(_ message: String) {
@@ -289,6 +465,21 @@ private struct ShareLens: Codable {
         }
         return base.isEmpty ? colorName : "\(base) / \(colorName)"
     }
+
+    var productNameDisplay: String {
+        productName.trimmedOrNil ?? "（品名未設定）"
+    }
+
+    static let placeholder = ShareLens(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000000") ?? UUID(),
+        brand: "",
+        productName: "",
+        colorName: "",
+        colorCategoryRaw: "",
+        repeatDecisionRaw: "",
+        graphicDiameter: nil,
+        stickerEyeJPEG: nil
+    )
 }
 
 private struct ShareWearLog: Codable {

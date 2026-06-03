@@ -2,6 +2,7 @@ const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function callGemini({ apiKey, prompt, useGoogleSearch }) {
   const endpoint =
@@ -27,6 +28,26 @@ async function callGemini({ apiKey, prompt, useGoogleSearch }) {
     },
     body: JSON.stringify(requestBody),
   });
+}
+
+async function callGeminiWithRetry({ apiKey, prompt, useGoogleSearch, maxAttempts = 3 }) {
+  let lastResponse = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await callGemini({ apiKey, prompt, useGoogleSearch });
+    if (response.ok) {
+      return response;
+    }
+
+    lastResponse = response;
+    if (response.status !== 503 || attempt === maxAttempts) {
+      return response;
+    }
+
+    await sleep(800 * attempt);
+  }
+
+  return lastResponse;
 }
 
 exports.lensLookup = onRequest({ secrets: [geminiApiKey] }, async (req, res) => {
@@ -70,15 +91,21 @@ ${colorName || "(未指定)"}
 ルール:
 - JSON以外は出力しない
 - 数値スペックを推定しない
-- 公式サイト、公式商品ページ、メーカー情報を最優先にする
-- 公式情報が見つからない場合だけ、大手販売ページを使ってよい
-- 情報が見つからない、複数ソースで値が食い違う、色違いか商品違いの可能性がある場合は、その項目を null にする
-- sourceURL には、実際に値を確認したページのURLを1つ入れる
-- note には、「公式で確認」「販売ページで確認」「値が競合したので未入力」など判断理由を短く入れる
+- URLの新規生成・推測・補完を禁止する
+- 実際にページ内に存在し、「カラコン」または「レンズ」と書かれているリンク先のみ参照する
+- 公式ブランドサイト、公式商品ページ、公式通販サイトを最優先にする
+- 公式情報が見つからない場合だけ、大手カラコン通販の公式サイトを使ってよい
+- 参照先が公式か曖昧な場合、そのページは使わない
+- 着色直径は、「着色直径」「GDIA」「G.DIA」のいずれかの表記を確認できた場合のみ graphicDiameter に入れる
+- 情報が見つからない、複数ソースで値が食い違う、色違いか商品違いの可能性がある、少しでも曖昧な場合は、その項目を null にする
+- 推測で補完しない
+- sourceURL には、実際に値を確認したページのURLを1つだけ入れる
+- note には、「公式で確認」「公式通販で確認」「着色直径はGDIA表記を確認」「値が曖昧なので未入力」など判断理由を短く入れる
+- 注意書きとして「AIの情報は全て正しいわけではありません。公式サイトの情報もあわせてご確認ください。」という趣旨が伝わる短い文を note に含めてよい
 - 不明なものは null
 `.trim();
 
-    let geminiResp = await callGemini({
+    let geminiResp = await callGeminiWithRetry({
       apiKey,
       prompt,
       useGoogleSearch: true,
@@ -87,7 +114,7 @@ ${colorName || "(未指定)"}
     if (!geminiResp.ok) {
       const firstErrorText = await geminiResp.text();
 
-      geminiResp = await callGemini({
+      geminiResp = await callGeminiWithRetry({
         apiKey,
         prompt,
         useGoogleSearch: false,

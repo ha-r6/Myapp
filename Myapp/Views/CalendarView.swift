@@ -9,13 +9,11 @@ struct CalendarView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("カレンダー")
-                        .font(.title.bold())
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
+                Text("カレンダー")
+                    .font(.title3.bold())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
 
                 DatePicker(
                     "日付",
@@ -23,6 +21,7 @@ struct CalendarView: View {
                     displayedComponents: [.date]
                 )
                 .datePickerStyle(.graphical)
+                .environment(\.locale, Locale(identifier: "ja_JP"))
                 .padding(.horizontal, 16)
                 .appCard()
                 .padding(.horizontal, 16)
@@ -108,7 +107,7 @@ private struct CalendarLensCard: View {
     let lens: Lens
 
     var body: some View {
-        LensStickerCard(lens: lens)
+        LensStickerCard(lens: lens, paletteIndex: nil)
             .scaleEffect(0.92)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
