@@ -29,16 +29,18 @@ enum AppSettingsKeys {
 struct SetupGateViewModifier: ViewModifier {
     @AppStorage(AppSettingsKeys.hasCompletedSetup) private var hasCompletedSetup = false
 
-    @State private var showing = false
-
     func body(content: Content) -> some View {
         content
-            .onAppear {
-                if hasCompletedSetup == false {
-                    showing = true
-                }
-            }
-            .sheet(isPresented: $showing) {
+            .sheet(
+                isPresented: Binding(
+                    get: { hasCompletedSetup == false },
+                    set: { isPresented in
+                        if isPresented == false {
+                            hasCompletedSetup = true
+                        }
+                    }
+                )
+            ) {
                 NavigationStack {
                     InitialSetupView(hasCompletedSetup: $hasCompletedSetup)
                 }
