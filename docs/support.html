@@ -7,14 +7,17 @@
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f3ee;
+      --bg: #fcfbff;
+      --bg-soft: #fbf7ff;
       --card: rgba(255, 255, 255, 0.9);
-      --text: #1f1a17;
-      --muted: #6d625b;
-      --accent: #b65a3c;
-      --accent-dark: #8b3f25;
-      --border: rgba(110, 88, 74, 0.18);
-      --shadow: 0 20px 45px rgba(76, 48, 33, 0.12);
+      --text: #3a3143;
+      --muted: #786f84;
+      --accent: #f3bfd2;
+      --accent-2: #d9cbf8;
+      --accent-3: #f8d6b1;
+      --accent-ink: #745f96;
+      --border: rgba(58, 49, 67, 0.08);
+      --shadow: 0 14px 30px rgba(144, 122, 176, 0.1);
     }
 
     * {
@@ -26,8 +29,9 @@
       font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top left, rgba(255, 208, 179, 0.55), transparent 32%),
-        linear-gradient(180deg, #fffaf5 0%, var(--bg) 100%);
+        radial-gradient(circle at top left, rgba(243, 191, 210, 0.42), transparent 30%),
+        radial-gradient(circle at top right, rgba(217, 203, 248, 0.34), transparent 24%),
+        linear-gradient(180deg, var(--bg-soft) 0%, var(--bg) 100%);
       line-height: 1.7;
     }
 
@@ -41,21 +45,34 @@
     .card {
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 24px;
+      border-radius: 18px;
       box-shadow: var(--shadow);
-      backdrop-filter: blur(10px);
+      backdrop-filter: blur(12px);
     }
 
     .hero {
       padding: 40px 28px;
       margin-bottom: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -120px -120px auto;
+      width: 240px;
+      height: 240px;
+      background: radial-gradient(circle, rgba(248, 214, 177, 0.4), rgba(248, 214, 177, 0));
+      pointer-events: none;
     }
 
     .eyebrow {
       margin: 0 0 10px;
       font-size: 0.92rem;
-      letter-spacing: 0.08em;
-      color: var(--accent-dark);
+      letter-spacing: 0.06em;
+      color: var(--accent-ink);
+      font-weight: 700;
     }
 
     h1,
@@ -79,10 +96,30 @@
       font-size: 1.04rem;
     }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 20px;
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .contact-mail {
+      display: inline-block;
+      padding: 14px 18px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.86);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 700;
+      text-decoration: none;
+      word-break: break-all;
+    }
+
+    .contact-mail strong,
+    .button strong {
+      display: block;
+      font-size: 0.82rem;
+      opacity: 0.8;
     }
 
     .card {
@@ -105,42 +142,23 @@
     }
 
     a {
-      color: var(--accent-dark);
+      color: var(--accent-ink);
     }
 
     .button {
       display: inline-block;
-      margin-top: 18px;
       padding: 12px 18px;
-      border-radius: 999px;
-      background: var(--accent);
-      color: #fff;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--accent-2), var(--accent));
+      color: #4f4265;
       text-decoration: none;
       font-weight: 700;
+      box-shadow: 0 10px 20px rgba(175, 158, 208, 0.2);
     }
 
     .button:hover,
     .button:focus-visible {
-      background: var(--accent-dark);
-    }
-
-    .faq {
-      margin-top: 20px;
-      display: grid;
-      gap: 16px;
-    }
-
-    .faq-item {
-      padding: 18px 20px;
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.8);
-      border: 1px solid var(--border);
-    }
-
-    .faq-item strong {
-      display: block;
-      margin-bottom: 6px;
-      color: var(--text);
+      filter: brightness(1.03);
     }
 
     footer {
@@ -157,43 +175,18 @@
       <p class="eyebrow">Support Page</p>
       <h1>カラコン図鑑 サポート</h1>
       <p class="lead">
-        カラコン図鑑に関するお問い合わせ、不具合報告、ご要望の受付ページです。
-        内容を確認のうえ、必要に応じてお問い合わせフォームからご連絡ください。
+        カラコン図鑑に関するご質問や不具合報告のためのサポートページです。
+        お問い合わせは、下記のメールアドレスまたはお問い合わせフォームからご連絡ください。
       </p>
-      <a class="button" href="https://docs.google.com/forms/d/e/1FAIpQLSdHMstMDUJ2LhsG9YnGRkoHAx7cqlpIgMW9r5dzOw98QWlzzQ/viewform?usp=dialog">お問い合わせフォームを開く</a>
-    </section>
-
-    <section class="grid" aria-label="support details">
-      <article class="card">
-        <h2>アプリについて</h2>
-        <p>
-          カラコン図鑑は、カラコンの情報や装用記録を管理するためのアプリです。
-          利用中に不明点がある場合は、下記のFAQをご確認ください。
-        </p>
-      </article>
-
-      <article class="card">
-        <h2>お問い合わせ方法</h2>
-        <p>
-          不具合報告やご質問は、Googleフォームから受け付けています。
-          ご利用端末、iOSのバージョン、発生した状況をできるだけ詳しくご記載ください。
-        </p>
-        <a class="button" href="https://docs.google.com/forms/d/e/1FAIpQLSdHMstMDUJ2LhsG9YnGRkoHAx7cqlpIgMW9r5dzOw98QWlzzQ/viewform?usp=dialog">フォームへ進む</a>
-      </article>
-    </section>
-
-    <section class="card faq" aria-label="faq">
-      <div class="faq-item">
-        <strong>Q. アプリが正常に動作しない場合は？</strong>
-        <p>アプリを再起動し、最新バージョンへ更新したうえで再度お試しください。</p>
-      </div>
-      <div class="faq-item">
-        <strong>Q. 記録したデータを削除できますか？</strong>
-        <p>アプリ内の各詳細画面から削除できます。削除後は元に戻せないためご注意ください。</p>
-      </div>
-      <div class="faq-item">
-        <strong>Q. 問い合わせ時に伝えるとよい内容は？</strong>
-        <p>端末名、iOSバージョン、発生した操作手順、表示されたメッセージがあると確認がスムーズです。</p>
+      <div class="hero-actions">
+        <a class="contact-mail" href="mailto:haruka_617@icloud.com">
+          <strong>メールで問い合わせ</strong>
+          haruka_617@icloud.com
+        </a>
+        <a class="button" href="https://docs.google.com/forms/d/e/1FAIpQLSdHMstMDUJ2LhsG9YnGRkoHAx7cqlpIgMW9r5dzOw98QWlzzQ/viewform?usp=dialog" target="_blank" rel="noopener noreferrer">
+          <strong>フォームで問い合わせ</strong>
+          お問い合わせフォームを開く
+        </a>
       </div>
     </section>
 
