@@ -9,11 +9,7 @@ struct CalendarView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                Text("カレンダー")
-                    .font(.title3.bold())
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                StickerPageHeaderView(title: "カレンダー")
 
                 DatePicker(
                     "日付",
@@ -54,7 +50,8 @@ struct CalendarView: View {
                 .padding(.bottom, 24)
             }
         }
-        .navigationTitle("カレンダー")
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
         .background(AppTheme.subtleBackgroundGradient.ignoresSafeArea())
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

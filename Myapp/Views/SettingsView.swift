@@ -44,11 +44,10 @@ struct SettingsView: View {
     var body: some View {
         List {
             Section {
-                EmptyView()
+                StickerPageHeaderView(title: "設定")
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
-            } header: {
-                Text("設定")
             }
             Section {
                 Toggle("度数を固定する", isOn: $fixedPowerEnabled)
@@ -86,7 +85,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("設定")
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
         .scrollContentBackground(.hidden)
         .background(AppTheme.subtleBackgroundGradient)
         .toolbarBackground(.visible, for: .navigationBar)

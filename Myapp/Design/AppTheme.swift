@@ -6,15 +6,16 @@ enum AppTheme {
     static let accent2 = Color(red: 0.62, green: 0.25, blue: 0.95) // purple
     static let accent3 = Color(red: 1.00, green: 0.60, blue: 0.20) // orange
 
-    static let background = Color(red: 0.99, green: 0.99, blue: 1.00) // almost white
-    static let surface = Color.white
-    static let hairline = Color.black.opacity(0.08)
+    static let background = Color(uiColor: .systemGroupedBackground)
+    static let surface = Color(uiColor: .secondarySystemBackground)
+    static let hairline = Color(uiColor: .separator).opacity(0.7)
+    static let elevatedShadow = Color.black.opacity(0.08)
 
     static var subtleBackgroundGradient: LinearGradient {
         LinearGradient(
             colors: [
                 background,
-                Color(red: 0.98, green: 0.98, blue: 0.99),
+                Color(uiColor: .tertiarySystemBackground),
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -61,7 +62,7 @@ struct CardModifier: ViewModifier {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(AppTheme.hairline, lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 6)
+            .shadow(color: AppTheme.elevatedShadow, radius: 10, x: 0, y: 6)
     }
 }
 

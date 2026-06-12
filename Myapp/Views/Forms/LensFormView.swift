@@ -62,11 +62,11 @@ struct LensFormView: View {
             }
         }
 
-        var label: String {
+        func label(fractionDigits: Int) -> String {
             switch self {
             case .unselected: "選択する"
             case .manual: "手入力"
-            case .value(let v): String(format: "%.2f", v)
+            case .value(let v): String(format: "%.\(fractionDigits)f", v)
             }
         }
 
@@ -102,12 +102,71 @@ struct LensFormView: View {
         let image: UIImage
     }
 
+    private enum FormStep: Int, CaseIterable, Identifiable {
+        case photo
+        case name
+        case specs
+        case usage
+
+        var id: Int { rawValue }
+
+        var title: String {
+            switch self {
+            case .photo: "写真"
+            case .name: "カラコン名"
+            case .specs: "スペック"
+            case .usage: "使い方メモ"
+            }
+        }
+
+        var prompt: String {
+            switch self {
+            case .photo: "図鑑に使う目元写真を設定します。"
+            case .name: "ブランド名、商品名、カラー名と分類をまとめて入力します。"
+            case .specs: "着色直径やBCなどのスペックをまとめて登録します。"
+            case .usage: "度数、使用期間、購入場所、メモをまとめて残します。"
+            }
+        }
+
+        var requirementText: String {
+            switch self {
+            case .name, .specs:
+                return "必須"
+            case .usage, .photo:
+                return "任意"
+            }
+        }
+
+        var isRequired: Bool {
+            switch self {
+            case .name, .specs, .usage:
+                return true
+            default:
+                return false
+            }
+        }
+
+        var showsStepRequirementBadge: Bool {
+            false
+        }
+
+        var showsPrompt: Bool {
+            switch self {
+            case .photo:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     @State private var bcChoice: DoubleInputChoice = .unselected
     @State private var diaChoice: DoubleInputChoice = .unselected
     @State private var graphicDiameterChoice: DoubleInputChoice = .unselected
     @State private var leftPowerChoice: DoubleInputChoice = .unselected
     @State private var rightPowerChoice: DoubleInputChoice = .unselected
     @State private var replacementPreset: ReplacementPreset = .oneDay
+    @State private var currentStep: FormStep = .photo
 
     @FocusState private var isPurchasePlaceFocused: Bool
     @State private var isInitializing = true
@@ -183,6 +242,17 @@ struct LensFormView: View {
         if let days = replacementPreset.days { return days }
         return replacementDaysInt
     }
+    private var hasResolvedFixedPowers: Bool {
+        fixedPowerEnabled &&
+            resolvedFixedLeftPowerDouble != nil &&
+            resolvedFixedRightPowerDouble != nil
+    }
+    private var leftPowerForSave: Double? {
+        hasResolvedFixedPowers ? resolvedFixedLeftPowerDouble : leftPowerDouble
+    }
+    private var rightPowerForSave: Double? {
+        hasResolvedFixedPowers ? resolvedFixedRightPowerDouble : rightPowerDouble
+    }
 
     private var recentPurchasePlaces: [String] {
         recentPurchasePlacesRaw
@@ -200,16 +270,42 @@ struct LensFormView: View {
             .prefix(8)
             .map { $0 }
     }
+    private var showsPurchaseSuggestionTray: Bool {
+        currentStep == .usage && isPurchasePlaceFocused && purchasePlaceSuggestions.isEmpty == false
+    }
 
     private var isFormValid: Bool {
         if brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
         if productName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
         if graphicDiameterDouble == nil { return false }
         if isPrescription {
-            if fixedPowerEnabled { return true }
-            return leftPowerDouble != nil && rightPowerDouble != nil
+            return leftPowerForSave != nil && rightPowerForSave != nil
         }
         return true
+    }
+
+    private var missingRequiredFields: [String] {
+        var fields: [String] = []
+
+        if brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            fields.append("ブランド名")
+        }
+        if productName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            fields.append("商品名")
+        }
+        if graphicDiameterDouble == nil {
+            fields.append("着色直径")
+        }
+        if isPrescription {
+            if leftPowerForSave == nil {
+                fields.append("左の度数")
+            }
+            if rightPowerForSave == nil {
+                fields.append("右の度数")
+            }
+        }
+
+        return fields
     }
 
     private var photoPickerLabelText: String {
@@ -229,37 +325,64 @@ struct LensFormView: View {
         )
     }
 
-    var body: some View {
-        Form {
-            photoSection
-            nameSection
-            colorCategorySection
-            purchaseSection
-            specSection
-            repeatSection
-            memoSection
+    private var visibleSteps: [FormStep] {
+        FormStep.allCases
+    }
+
+    private var currentStepIndex: Int {
+        visibleSteps.firstIndex(of: currentStep) ?? 0
+    }
+
+    private var isLastStep: Bool {
+        currentStepIndex == visibleSteps.count - 1
+    }
+
+    private var canProceedFromCurrentStep: Bool {
+        switch currentStep {
+        case .name:
+            return brand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false &&
+                productName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        case .specs:
+            return graphicDiameterDouble != nil
+        case .usage:
+            if isPrescription == false { return true }
+            return leftPowerForSave != nil && rightPowerForSave != nil
+        default:
+            return true
         }
-        .navigationTitle(editingLens == nil ? "レンズ追加" : "レンズ編集")
-        .scrollContentBackground(.hidden)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            stepProgressHeader
+
+            ScrollView {
+                VStack(spacing: 16) {
+                    stepCard
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 20)
+            }
+            .scrollDismissesKeyboard(.interactively)
+
+            stepFooter
+        }
+        .navigationTitle(editingLens == nil ? "カラコン追加" : "カラコン編集")
         .background(AppTheme.subtleBackgroundGradient)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("キャンセル") { dismiss() }
             }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("保存") {
-                    if isFormValid == false {
-                        validationErrorMessage = "ブランド名、商品名、着色直径を入力してください。度ありの場合は左右の度数も必要です。"
-                        return
-                    }
-                    save()
-                    dismiss()
-                }
-                .disabled(isFormValid == false)
-            }
         }
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarBackground(AppTheme.background, for: .navigationBar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if showsPurchaseSuggestionTray {
+                purchasePlaceSuggestionsTray
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
+        }
         .alert("入力エラー", isPresented: validationAlertBinding) {
             Button("OK", role: .cancel) { validationErrorMessage = nil }
         } message: {
@@ -290,49 +413,26 @@ struct LensFormView: View {
                 }
             )
         }
-        .onChange(of: stickerPickerItem) { _, next in
-            Task {
-                await MainActor.run { preparingStickerImage = true }
-                let image = await loadSourceImage(from: next)
-                await MainActor.run {
-                    preparingStickerImage = false
-                    if let image {
-                        stickerEditingSourceImage = EditableSourceImage(image: image)
-                    }
-                }
-            }
+        .onChange(of: stickerPickerItem) { _, next in handleStickerPickerItemChange(next) }
+        .onAppear(perform: handleOnAppear)
+        .onChange(of: isPrescription) { _, _ in
+            syncCurrentStepIfNeeded()
         }
-        .onAppear {
-            isInitializing = true
-            if let lens = editingLens {
-                populateFromLens(lens)
-                isInitializing = false
-                return
-            }
-
-            if let suggestion = prefillSuggestion {
-                brand = suggestion.brand
-                productName = suggestion.productName
-                colorName = suggestion.colorName
-                replacementDaysText = suggestion.replacementDays.map { String($0) } ?? ""
-                isPrescription = suggestion.isPrescription
-
-                if let days = suggestion.replacementDays {
-                    replacementPreset = replacementPreset(for: days)
-                }
-
-                if suggestion.isPrescription, let fixedL = resolvedFixedLeftPowerDouble, let fixedR = resolvedFixedRightPowerDouble {
-                    leftPowerText = String(format: "%.2f", fixedL)
-                    rightPowerText = String(format: "%.2f", fixedR)
-                }
-            }
-            isInitializing = false
-        }
+        .onChange(of: bcChoice) { _, next in handleBCChoiceChange(next) }
+        .onChange(of: bcText) { _, next in handleBCTextChange(next) }
+        .onChange(of: diaChoice) { _, next in handleDIAChoiceChange(next) }
+        .onChange(of: diaText) { _, next in handleDIATextChange(next) }
+        .onChange(of: graphicDiameterChoice) { _, next in handleGraphicDiameterChoiceChange(next) }
+        .onChange(of: graphicDiameterText) { _, next in handleGraphicDiameterTextChange(next) }
+        .onChange(of: leftPowerChoice) { _, next in handleLeftPowerChoiceChange(next) }
+        .onChange(of: rightPowerChoice) { _, next in handleRightPowerChoiceChange(next) }
+        .onChange(of: replacementPreset) { _, next in handleReplacementPresetChange(next) }
+        .onChange(of: isPrescription) { _, next in handlePrescriptionChange(next) }
     }
 
     @ViewBuilder
     private var photoSection: some View {
-        Section {
+        VStack(alignment: .leading, spacing: 14) {
             PhotosPicker(selection: $stickerPickerItem, matching: .images) {
                 Label(photoPickerLabelText, systemImage: "photo")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -365,34 +465,22 @@ struct LensFormView: View {
             EyeStickerPreview(data: stickerEyeJPEGData)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 6)
-        } header: {
-            Text("写真")
-        } footer: {
+
             Text("枠に合わせて撮影。図鑑の代表写真にします。")
+                .font(.footnote)
                 .foregroundStyle(.secondary)
         }
     }
 
-    private var nameSection: some View {
-        Section("名称") {
-            TextField("ブランド", text: $brand)
-            TextField("商品名", text: $productName)
-            TextField("カラー", text: $colorName)
-        }
-    }
-
     private var purchaseSection: some View {
-        Section("購入") {
+        VStack(alignment: .leading, spacing: 12) {
             TextField("購入場所", text: $purchasePlace)
                 .focused($isPurchasePlaceFocused)
-
-            if isPurchasePlaceFocused, purchasePlaceSuggestions.isEmpty == false {
-                purchasePlaceSuggestionsView
-            }
+                .textFieldStyle(.roundedBorder)
         }
     }
 
-    private var purchasePlaceSuggestionsView: some View {
+    private var purchasePlaceSuggestionsTray: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("履歴")
                 .font(.caption)
@@ -404,7 +492,16 @@ struct LensFormView: View {
                 }
             }
         }
-        .padding(.top, 4)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(AppTheme.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AppTheme.hairline, lineWidth: 1)
+        )
+        .shadow(color: AppTheme.elevatedShadow, radius: 12, x: 0, y: 4)
     }
 
     private func purchasePlaceSuggestionButton(_ suggestion: String) -> some View {
@@ -416,150 +513,83 @@ struct LensFormView: View {
         .controlSize(.small)
     }
 
-    private var specSection: some View {
-        Section("スペック") {
-            doubleChoicePicker(
-                title: "着色直径",
-                selection: $graphicDiameterChoice,
-                options: graphicDiameterChoiceOptions,
-                text: $graphicDiameterText,
-                placeholder: "着色直径（例: 13.2）"
-            )
-            doubleChoicePicker(
-                title: "BC",
-                selection: $bcChoice,
-                options: bcChoiceOptions,
-                text: $bcText,
-                placeholder: "BC（例: 8.6）"
-            )
-            doubleChoicePicker(
-                title: "DIA",
-                selection: $diaChoice,
-                options: diaChoiceOptions,
-                text: $diaText,
-                placeholder: "DIA（例: 14.2）"
-            )
-
-            waterContentPicker
-
-            Toggle("度あり", isOn: $isPrescription)
-            if isPrescription {
-                prescriptionPowerSection
-            }
-
-            replacementDaysSection
-        }
-        .onChange(of: bcChoice) { _, next in
-            if isInitializing { return }
-            if let v = next.doubleValue { bcText = String(format: "%.1f", v) } else { bcText = "" }
-            if next == .manual { bcText = "" }
-        }
-        .onChange(of: diaChoice) { _, next in
-            if isInitializing { return }
-            if let v = next.doubleValue { diaText = String(format: "%.1f", v) } else { diaText = "" }
-            if next == .manual { diaText = "" }
-        }
-        .onChange(of: graphicDiameterChoice) { _, next in
-            if isInitializing { return }
-            if let v = next.doubleValue { graphicDiameterText = String(format: "%.1f", v) } else { graphicDiameterText = "" }
-            if next == .manual { graphicDiameterText = "" }
-        }
-        .onChange(of: leftPowerChoice) { _, next in
-            if isInitializing { return }
-            if let v = next.doubleValue { leftPowerText = String(format: "%.2f", v) } else { leftPowerText = "" }
-            if next == .manual { leftPowerText = "" }
-        }
-        .onChange(of: rightPowerChoice) { _, next in
-            if isInitializing { return }
-            if let v = next.doubleValue { rightPowerText = String(format: "%.2f", v) } else { rightPowerText = "" }
-            if next == .manual { rightPowerText = "" }
-        }
-        .onChange(of: replacementPreset) { _, next in
-            if let days = next.days {
-                replacementDaysText = String(days)
-            } else {
-                replacementDaysText = ""
-            }
-        }
-        .onChange(of: isPrescription) { _, next in
-            if next == false {
-                leftPowerText = ""
-                rightPowerText = ""
-                leftPowerChoice = .unselected
-                rightPowerChoice = .unselected
-            } else if fixedPowerEnabled, let fixedL = resolvedFixedLeftPowerDouble, let fixedR = resolvedFixedRightPowerDouble {
-                leftPowerText = String(format: "%.2f", fixedL)
-                rightPowerText = String(format: "%.2f", fixedR)
-            }
-        }
-    }
-
     private var repeatSection: some View {
-        Section("リピ") {
-            Picker("判断", selection: $repeatDecision) {
-                ForEach(RepeatDecision.allCases) { decision in
-                    Text(decision.rawValue).tag(decision)
-                }
+        Picker("判断", selection: $repeatDecision) {
+            ForEach(RepeatDecision.allCases) { decision in
+                Text(decision.rawValue).tag(decision)
             }
-            .pickerStyle(.segmented)
         }
+        .pickerStyle(.segmented)
     }
 
     private var memoSection: some View {
-        Section("メモ") {
-            TextField("自由メモ（任意）", text: $memo, axis: .vertical)
-        }
+        TextField("自由メモ", text: $memo, axis: .vertical)
+            .textFieldStyle(.roundedBorder)
+            .lineLimit(4...8)
     }
 
     private var colorCategorySection: some View {
-        Section("カラー分類") {
-            Picker("分類", selection: $colorCategorySelection) {
-                Text("選択する").tag(Optional<LensColorCategory>.none)
-                ForEach(selectableColorCategories) { category in
-                    colorCategoryOptionView(for: category)
-                }
+        Picker("分類", selection: $colorCategorySelection) {
+            Text("選択する").tag(Optional<LensColorCategory>.none)
+            ForEach(selectableColorCategories) { category in
+                colorCategoryOptionView(for: category)
             }
         }
+        .pickerStyle(.menu)
     }
 
     @ViewBuilder
     private var prescriptionPowerSection: some View {
-        if fixedPowerEnabled {
-            LabeledContent("度数（左右）") {
-                Text(fixedPowerSummaryText)
+        VStack(alignment: .leading, spacing: 16) {
+            fieldBlock("度数（左右）", isRequired: true) {
+                if hasResolvedFixedPowers {
+                    LabeledContent("固定度数") {
+                        Text(fixedPowerSummaryText)
+                    }
+                } else {
+                    powerChoicePicker(
+                        title: "左",
+                        selection: $leftPowerChoice,
+                        text: $leftPowerText,
+                        placeholder: "左（例: -3.25）"
+                    )
+                    powerChoicePicker(
+                        title: "右",
+                        selection: $rightPowerChoice,
+                        text: $rightPowerText,
+                        placeholder: "右（例: -3.25）"
+                    )
+                }
             }
-        } else {
-            powerChoicePicker(
-                title: "左",
-                selection: $leftPowerChoice,
-                text: $leftPowerText,
-                placeholder: "左（例: -3.25）"
-            )
-            powerChoicePicker(
-                title: "右",
-                selection: $rightPowerChoice,
-                text: $rightPowerText,
-                placeholder: "右（例: -3.25）"
-            )
+
+            if hasResolvedFixedPowers {
+                Text("設定している固定度数を自動で使います。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if fixedPowerEnabled {
+                Text("固定度数が未設定のため、このレンズでは左右の度数入力が必要です。")
+                    .font(.footnote)
+                    .foregroundStyle(AppTheme.accent)
+            }
         }
+        .padding(.top, 4)
     }
 
     @ViewBuilder
     private var replacementDaysSection: some View {
-        Text("日数")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-
-        Picker("", selection: $replacementPreset) {
-            ForEach(ReplacementPreset.allCases) { preset in
-                Text(preset.rawValue).tag(preset)
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("", selection: $replacementPreset) {
+                ForEach(ReplacementPreset.allCases) { preset in
+                    Text(preset.rawValue).tag(preset)
+                }
             }
-        }
-        .pickerStyle(.segmented)
+            .pickerStyle(.segmented)
 
-        if replacementPreset == .other {
-            TextField("日数（例: 45）", text: $replacementDaysText)
-                .keyboardType(.numberPad)
+            if replacementPreset == .other {
+                TextField("日数（例: 45）", text: $replacementDaysText)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+            }
         }
     }
 
@@ -597,7 +627,7 @@ struct LensFormView: View {
     ) -> some View {
         Picker(title, selection: selection) {
             ForEach(options) { choice in
-                Text(choice.label).tag(choice)
+                Text(choice.label(fractionDigits: 1)).tag(choice)
             }
         }
         .pickerStyle(.menu)
@@ -605,6 +635,7 @@ struct LensFormView: View {
         if selection.wrappedValue == .manual {
             TextField(placeholder, text: text)
                 .keyboardType(.decimalPad)
+                .textFieldStyle(.roundedBorder)
         }
     }
 
@@ -617,7 +648,7 @@ struct LensFormView: View {
     ) -> some View {
         Picker(title, selection: selection) {
             ForEach(powerChoiceOptions) { choice in
-                Text(choice.label).tag(choice)
+                Text(choice.label(fractionDigits: 2)).tag(choice)
             }
         }
         .pickerStyle(.menu)
@@ -625,15 +656,399 @@ struct LensFormView: View {
         if selection.wrappedValue == .manual {
             TextField(placeholder, text: text)
                 .keyboardType(.numbersAndPunctuation)
+                .textFieldStyle(.roundedBorder)
         }
     }
 
+    private var stepProgressHeader: some View {
+        VStack(spacing: 10) {
+            ProgressView(value: Double(currentStepIndex + 1), total: Double(max(visibleSteps.count, 1)))
+                .tint(AppTheme.accent)
+
+            HStack {
+                Spacer()
+                Text("\(currentStepIndex + 1) / \(visibleSteps.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(AppTheme.surface)
+                    )
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .background(AppTheme.background.opacity(0.96))
+    }
+
+    private var stepCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if currentStep.showsPrompt {
+                Text(currentStep.prompt)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            stepContent(for: currentStep)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .appCard()
+    }
+
+    @ViewBuilder
+    private func stepContent(for step: FormStep) -> some View {
+        switch step {
+        case .photo:
+            photoSection
+        case .name:
+            VStack(alignment: .leading, spacing: 12) {
+                fieldBlock("ブランド名", isRequired: true) {
+                    TextField("ブランド", text: $brand)
+                        .textFieldStyle(.roundedBorder)
+                }
+                fieldBlock("商品名", isRequired: true) {
+                    TextField("商品名", text: $productName)
+                        .textFieldStyle(.roundedBorder)
+                }
+                fieldBlock("カラー名", isRequired: false) {
+                    TextField("カラー", text: $colorName)
+                        .textFieldStyle(.roundedBorder)
+                }
+                fieldBlock("カラー分類", isRequired: false) {
+                    colorCategorySection
+                }
+            }
+        case .specs:
+            VStack(alignment: .leading, spacing: 16) {
+                fieldBlock("着色直径", isRequired: true) {
+                    doubleChoicePicker(
+                        title: "着色直径",
+                        selection: $graphicDiameterChoice,
+                        options: graphicDiameterChoiceOptions,
+                        text: $graphicDiameterText,
+                        placeholder: "着色直径（例: 13.2）"
+                    )
+                }
+                fieldBlock("BC", isRequired: false) {
+                    doubleChoicePicker(
+                        title: "BC",
+                        selection: $bcChoice,
+                        options: bcChoiceOptions,
+                        text: $bcText,
+                        placeholder: "BC（例: 8.6）"
+                    )
+                }
+                fieldBlock("DIA", isRequired: false) {
+                    doubleChoicePicker(
+                        title: "DIA",
+                        selection: $diaChoice,
+                        options: diaChoiceOptions,
+                        text: $diaText,
+                        placeholder: "DIA（例: 14.2）"
+                    )
+                }
+                fieldBlock("含水率", isRequired: false) {
+                    waterContentPicker
+                }
+            }
+        case .usage:
+            VStack(alignment: .leading, spacing: 20) {
+                fieldBlock("度あり/度なし", isRequired: false) {
+                    Toggle("度あり", isOn: $isPrescription)
+                        .toggleStyle(.switch)
+                        .padding(.top, 2)
+                        .padding(.bottom, 2)
+                }
+                if isPrescription {
+                    prescriptionPowerSection
+                }
+                fieldBlock("使用期間", isRequired: false) {
+                    replacementDaysSection
+                }
+                fieldBlock("リピ判断", isRequired: false) {
+                    repeatSection
+                }
+                fieldBlock("購入場所", isRequired: false) {
+                    purchaseSection
+                }
+                fieldBlock("メモ", isRequired: false) {
+                    memoSection
+                }
+            }
+        }
+    }
+
+    private var stepFooter: some View {
+        HStack(spacing: 12) {
+            Button {
+                goToPreviousStep()
+            } label: {
+                Text("戻る")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 76)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(AppTheme.surface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(AppTheme.accent.opacity(0.18), lineWidth: 1)
+                    )
+                    .shadow(color: AppTheme.accent.opacity(0.08), radius: 10, x: 0, y: 5)
+            }
+            .foregroundStyle(AppTheme.accent)
+            .opacity(currentStepIndex == 0 ? 0.45 : 1)
+            .disabled(currentStepIndex == 0)
+
+            Button {
+                if isLastStep {
+                    attemptSave()
+                } else {
+                    goToNextStep()
+                }
+            } label: {
+                Text(isLastStep ? "保存" : "次へ")
+                    .font(.headline.weight(.bold))
+                    .tracking(0.2)
+                    .frame(maxWidth: .infinity, minHeight: 76)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(
+                                canProceedFromCurrentStep
+                                    ? Color(red: 0.84, green: 0.30, blue: 0.45)
+                                    : Color(red: 0.72, green: 0.72, blue: 0.76)
+                            )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(
+                                canProceedFromCurrentStep
+                                    ? Color(red: 0.67, green: 0.20, blue: 0.34)
+                                    : Color.gray.opacity(0.18),
+                                lineWidth: 1.5
+                            )
+                    )
+                    .shadow(
+                        color: canProceedFromCurrentStep ? Color.black.opacity(0.16) : Color.clear,
+                        radius: 12,
+                        x: 0,
+                        y: 7
+                    )
+            }
+            .foregroundStyle(.white)
+            .disabled(canProceedFromCurrentStep == false)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background(AppTheme.background.opacity(0.98))
+    }
+
+    private func goToNextStep() {
+        guard canProceedFromCurrentStep else { return }
+        let steps = visibleSteps
+        guard let index = steps.firstIndex(of: currentStep), index + 1 < steps.count else { return }
+        currentStep = steps[index + 1]
+    }
+
+    private func goToPreviousStep() {
+        let steps = visibleSteps
+        guard let index = steps.firstIndex(of: currentStep), index > 0 else { return }
+        currentStep = steps[index - 1]
+    }
+
+    private func syncCurrentStepIfNeeded() {
+        let steps = visibleSteps
+        if steps.contains(currentStep) == false {
+            currentStep = steps.last ?? .photo
+        }
+    }
+
+    private func attemptSave() {
+        if isFormValid == false {
+            validationErrorMessage = "次の必須項目を入力してください: \(missingRequiredFields.joined(separator: "、"))"
+            return
+        }
+        save()
+        dismiss()
+    }
+
+    private func handleStickerPickerItemChange(_ next: PhotosPickerItem?) {
+        Task {
+            await MainActor.run {
+                preparingStickerImage = true
+            }
+
+            let image = await loadSourceImage(from: next)
+
+            await MainActor.run {
+                preparingStickerImage = false
+                if let image {
+                    stickerEditingSourceImage = EditableSourceImage(image: image)
+                }
+            }
+        }
+    }
+
+    private func handleOnAppear() {
+        isInitializing = true
+
+        if let lens = editingLens {
+            populateFromLens(lens)
+            isInitializing = false
+            return
+        }
+
+        if let suggestion = prefillSuggestion {
+            applySuggestion(suggestion)
+        }
+
+        isInitializing = false
+        syncCurrentStepIfNeeded()
+    }
+
+    private func applySuggestion(_ suggestion: LensSuggestion) {
+        brand = suggestion.brand
+        productName = suggestion.productName
+        colorName = suggestion.colorName
+        replacementDaysText = suggestion.replacementDays.map { String($0) } ?? ""
+        isPrescription = suggestion.isPrescription
+
+        if let days = suggestion.replacementDays {
+            replacementPreset = replacementPreset(for: days)
+        }
+
+        guard suggestion.isPrescription,
+              let fixedLeft = resolvedFixedLeftPowerDouble,
+              let fixedRight = resolvedFixedRightPowerDouble else {
+            return
+        }
+
+        leftPowerText = String(format: "%.2f", fixedLeft)
+        rightPowerText = String(format: "%.2f", fixedRight)
+    }
+
+    private func handleBCChoiceChange(_ next: DoubleInputChoice) {
+        if isInitializing { return }
+        if let value = next.doubleValue {
+            bcText = String(format: "%.1f", value)
+        } else {
+            bcText = ""
+        }
+        if next == .manual {
+            bcText = ""
+        }
+    }
+
+    private func handleBCTextChange(_ next: String) {
+        guard bcChoice == .manual else { return }
+        let normalized = normalizedDecimalText(next, maxFractionDigits: 1)
+        if normalized != next {
+            bcText = normalized
+        }
+    }
+
+    private func handleDIAChoiceChange(_ next: DoubleInputChoice) {
+        if isInitializing { return }
+        if let value = next.doubleValue {
+            diaText = String(format: "%.1f", value)
+        } else {
+            diaText = ""
+        }
+        if next == .manual {
+            diaText = ""
+        }
+    }
+
+    private func handleDIATextChange(_ next: String) {
+        guard diaChoice == .manual else { return }
+        let normalized = normalizedDecimalText(next, maxFractionDigits: 1)
+        if normalized != next {
+            diaText = normalized
+        }
+    }
+
+    private func handleGraphicDiameterChoiceChange(_ next: DoubleInputChoice) {
+        if isInitializing { return }
+        if let value = next.doubleValue {
+            graphicDiameterText = String(format: "%.1f", value)
+        } else {
+            graphicDiameterText = ""
+        }
+        if next == .manual {
+            graphicDiameterText = ""
+        }
+    }
+
+    private func handleGraphicDiameterTextChange(_ next: String) {
+        guard graphicDiameterChoice == .manual else { return }
+        let normalized = normalizedDecimalText(next, maxFractionDigits: 1)
+        if normalized != next {
+            graphicDiameterText = normalized
+        }
+    }
+
+    private func handleLeftPowerChoiceChange(_ next: DoubleInputChoice) {
+        if isInitializing { return }
+        if let value = next.doubleValue {
+            leftPowerText = String(format: "%.2f", value)
+        } else {
+            leftPowerText = ""
+        }
+        if next == .manual {
+            leftPowerText = ""
+        }
+    }
+
+    private func handleRightPowerChoiceChange(_ next: DoubleInputChoice) {
+        if isInitializing { return }
+        if let value = next.doubleValue {
+            rightPowerText = String(format: "%.2f", value)
+        } else {
+            rightPowerText = ""
+        }
+        if next == .manual {
+            rightPowerText = ""
+        }
+    }
+
+    private func handleReplacementPresetChange(_ next: ReplacementPreset) {
+        if let days = next.days {
+            replacementDaysText = String(days)
+        } else {
+            replacementDaysText = ""
+        }
+    }
+
+    private func handlePrescriptionChange(_ next: Bool) {
+        if next == false {
+            leftPowerText = ""
+            rightPowerText = ""
+            leftPowerChoice = .unselected
+            rightPowerChoice = .unselected
+            return
+        }
+
+        guard fixedPowerEnabled,
+              let fixedLeft = resolvedFixedLeftPowerDouble,
+              let fixedRight = resolvedFixedRightPowerDouble else {
+            return
+        }
+
+        leftPowerText = String(format: "%.2f", fixedLeft)
+        rightPowerText = String(format: "%.2f", fixedRight)
+    }
+
     private func save() {
-        let bc = bcDouble
-        let dia = diaDouble
-        let graphicDiameter = graphicDiameterDouble
-        let leftPower = fixedPowerEnabled ? (resolvedFixedLeftPowerDouble ?? leftPowerDouble) : leftPowerDouble
-        let rightPower = fixedPowerEnabled ? (resolvedFixedRightPowerDouble ?? rightPowerDouble) : rightPowerDouble
+        let bc = rounded(bcDouble, digits: 1)
+        let dia = rounded(diaDouble, digits: 1)
+        let graphicDiameter = rounded(graphicDiameterDouble, digits: 1)
+        let leftPower = leftPowerForSave
+        let rightPower = rightPowerForSave
         let replacementDays = replacementDaysForSave ?? replacementDaysInt
 
         var lens = editingLens ?? Lens()
@@ -663,6 +1078,70 @@ struct LensFormView: View {
             if let l = leftPower { lastLeftPowerRaw = String(format: "%.2f", l) }
             if let r = rightPower { lastRightPowerRaw = String(format: "%.2f", r) }
         }
+    }
+
+    @ViewBuilder
+    private func fieldBlock<Content: View>(
+        _ title: String,
+        isRequired: Bool,
+        showsBadge: Bool = true,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                if showsBadge {
+                    requirementBadge(for: isRequired ? "必須" : "任意", isRequired: isRequired)
+                }
+            }
+
+            content()
+        }
+    }
+
+    private func requirementBadge(for text: String, isRequired: Bool) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(isRequired ? AppTheme.accent : .secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(isRequired ? AppTheme.accent.opacity(0.12) : Color.secondary.opacity(0.12))
+            )
+    }
+
+    private func normalizedDecimalText(_ value: String, maxFractionDigits: Int) -> String {
+        let filtered = value.filter { $0.isNumber || $0 == "." }
+        var result = ""
+        var sawSeparator = false
+        var fractionDigits = 0
+
+        for char in filtered {
+            if char == "." {
+                if sawSeparator { continue }
+                sawSeparator = true
+                if result.isEmpty { result = "0" }
+                result.append(char)
+                continue
+            }
+
+            if sawSeparator {
+                guard fractionDigits < maxFractionDigits else { continue }
+                fractionDigits += 1
+            }
+
+            result.append(char)
+        }
+
+        return result
+    }
+
+    private func rounded(_ value: Double?, digits: Int) -> Double? {
+        guard let value else { return nil }
+        let scale = pow(10.0, Double(digits))
+        return (value * scale).rounded() / scale
     }
 
     private func populateFromLens(_ lens: Lens) {
@@ -863,7 +1342,7 @@ private struct EyeEllipseEditorView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完了") {
-                        onSave(renderMaskedJPEG())
+                        onSave(renderMaskedImageData())
                     }
                 }
             }
@@ -914,18 +1393,16 @@ private struct EyeEllipseEditorView: View {
         offset.height = min(max(offset.height, -maxY), maxY)
     }
 
-    private func renderMaskedJPEG() -> Data? {
+    private func renderMaskedImageData() -> Data? {
         let baseWidth: CGFloat = 960
         let viewportAspect = max(viewportSize.height, 1) / max(viewportSize.width, 1)
         let canvasSize = CGSize(width: baseWidth, height: baseWidth * viewportAspect)
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1
+        format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: canvasSize, format: format)
 
         let rendered = renderer.image { ctx in
-            UIColor.white.setFill()
-            ctx.fill(CGRect(origin: .zero, size: canvasSize))
-
             let clipRect = CGRect(origin: .zero, size: canvasSize)
             let clipPath = UIBezierPath(roundedRect: clipRect, cornerRadius: 36)
             clipPath.addClip()
@@ -947,7 +1424,7 @@ private struct EyeEllipseEditorView: View {
             ctx.cgContext.restoreGState()
         }
 
-        return rendered.jpegData(compressionQuality: 0.92)
+        return rendered.pngData()
     }
 
     private func aspectFillRect(contentSize: CGSize, boundsSize: CGSize) -> CGRect {

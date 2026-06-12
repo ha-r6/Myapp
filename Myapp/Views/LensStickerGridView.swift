@@ -57,6 +57,8 @@ struct LensStickerGridView: View {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 Group {
                                     switch facet {
+                                    case .none:
+                                        EmptyView()
                                     case .repeatDecision:
                                         Picker("リピ", selection: $filter.repeatDecision) {
                                             ForEach(repeatDecisionOptions) { option in
@@ -212,10 +214,20 @@ private struct LensStickerFilter: Hashable {
     var colorCategory: LensColorCategory = .all
 
     var isDefault: Bool {
-        repeatDecision == .all
-            && bcChoice == .all
-            && graphicDiameterChoice == .all
-            && colorCategory == .all
+        switch activeFacet {
+        case nil:
+            return true
+        case .some(.none):
+            return true
+        case .repeatDecision:
+            return repeatDecision == .all
+        case .bc:
+            return bcChoice == .all
+        case .graphicDiameter:
+            return graphicDiameterChoice == .all
+        case .colorCategory:
+            return colorCategory == .all
+        }
     }
 
     var summaryText: String {
@@ -223,23 +235,34 @@ private struct LensStickerFilter: Hashable {
     }
 
     func matches(_ lens: Lens) -> Bool {
-        if repeatDecision != .all, repeatDecision.value != lens.repeatDecision {
-            return false
-        }
-        if bcChoice != .all, bcChoice != OptionalDoubleChoice.from(lens.bc) {
-            return false
-        }
-        if graphicDiameterChoice != .all, graphicDiameterChoice != OptionalDoubleChoice.from(lens.graphicDiameter) {
-            return false
-        }
-        if colorCategory != .all, colorCategory != lens.colorCategory {
-            return false
+        switch activeFacet {
+        case nil:
+            return true
+        case .some(.none):
+            return true
+        case .repeatDecision:
+            if repeatDecision != .all, repeatDecision.value != lens.repeatDecision {
+                return false
+            }
+        case .bc:
+            if bcChoice != .all, bcChoice != OptionalDoubleChoice.from(lens.bc) {
+                return false
+            }
+        case .graphicDiameter:
+            if graphicDiameterChoice != .all, graphicDiameterChoice != OptionalDoubleChoice.from(lens.graphicDiameter) {
+                return false
+            }
+        case .colorCategory:
+            if colorCategory != .all, colorCategory != lens.colorCategory {
+                return false
+            }
         }
         return true
     }
 }
 
 private enum LensStickerFilterFacet: String, CaseIterable, Identifiable {
+    case none = "絞り込みなし"
     case repeatDecision = "リピ"
     case bc = "BC"
     case graphicDiameter = "着色直径"
@@ -343,6 +366,10 @@ private struct LensStickerFilterSheet: View {
     @Binding var filter: LensStickerFilter
     @Environment(\.dismiss) private var dismiss
 
+    private var facetOptions: [LensStickerFilterFacet] {
+        [.none, .repeatDecision, .bc, .graphicDiameter, .colorCategory]
+    }
+
     private var repeatDecisionOptions: [RepeatDecisionChoice] {
         [.all] + RepeatDecision.allCases.map { .value($0) }
     }
@@ -366,9 +393,11 @@ private struct LensStickerFilterSheet: View {
     var body: some View {
         List {
             Section("表示する項目（1つ）") {
-                ForEach(LensStickerFilterFacet.allCases) { facet in
+                ForEach(facetOptions) { facet in
                     Button {
-                        if filter.activeFacet == facet {
+                        if facet == .none {
+                            filter.activeFacet = nil
+                        } else if filter.activeFacet == facet {
                             filter.activeFacet = nil
                         } else {
                             filter.activeFacet = facet
@@ -378,8 +407,8 @@ private struct LensStickerFilterSheet: View {
                             Text(facet.rawValue)
                                 .foregroundStyle(.primary)
                             Spacer()
-                            Image(systemName: filter.activeFacet == facet ? "checkmark.square.fill" : "square")
-                                .foregroundStyle(filter.activeFacet == facet ? AppTheme.accent : .secondary)
+                            Image(systemName: isFacetSelected(facet) ? "checkmark.square.fill" : "square")
+                                .foregroundStyle(isFacetSelected(facet) ? AppTheme.accent : .secondary)
                                 .imageScale(.large)
                         }
                         .contentShape(Rectangle())
@@ -397,6 +426,13 @@ private struct LensStickerFilterSheet: View {
                 Button("保存") { dismiss() }
             }
         }
+    }
+
+    private func isFacetSelected(_ facet: LensStickerFilterFacet) -> Bool {
+        if facet == .none {
+            return filter.activeFacet == nil
+        }
+        return filter.activeFacet == facet
     }
 }
 
@@ -574,7 +610,7 @@ private struct EyeStickerImage: View {
     private let imageAreaHeight: CGFloat = 126
 
     private var placeholderBackgroundOpacity: Double {
-        data == nil ? 0.14 : 0.06
+        0.16
     }
 
     var body: some View {

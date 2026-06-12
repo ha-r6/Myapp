@@ -135,21 +135,34 @@ final class ShareViewController: UIViewController {
                 return
             }
 
-            provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
-                if let url = item as? URL,
-                   let date = Self.captureDate(fromImageAt: url) {
+            self.loadCaptureDateUsingDataRepresentation(from: provider, candidateTypes: candidateTypes) { date in
+                if let date {
                     completion(date)
                     return
                 }
 
-                if let image = item as? UIImage,
-                   let data = image.jpegData(compressionQuality: 1.0),
-                   let date = Self.captureDate(fromImageData: data) {
-                    completion(date)
-                    return
-                }
+                provider.loadItem(forTypeIdentifier: UTType.image.identifier, options: nil) { item, _ in
+                    if let url = item as? URL,
+                       let date = Self.captureDate(fromImageAt: url) {
+                        completion(date)
+                        return
+                    }
 
-                completion(nil)
+                    if let data = item as? Data,
+                       let date = Self.captureDate(fromImageData: data) {
+                        completion(date)
+                        return
+                    }
+
+                    if let image = item as? UIImage,
+                       let data = image.jpegData(compressionQuality: 1.0),
+                       let date = Self.captureDate(fromImageData: data) {
+                        completion(date)
+                        return
+                    }
+
+                    completion(nil)
+                }
             }
         }
     }
@@ -175,6 +188,31 @@ final class ShareViewController: UIViewController {
                 completion(nil)
             } else {
                 self.loadCaptureDateUsingFileRepresentation(from: provider, candidateTypes: remaining, completion: completion)
+            }
+        }
+    }
+
+    private func loadCaptureDateUsingDataRepresentation(
+        from provider: NSItemProvider,
+        candidateTypes: [UTType],
+        completion: @escaping (Date?) -> Void
+    ) {
+        guard let type = candidateTypes.first(where: { provider.hasItemConformingToTypeIdentifier($0.identifier) }) else {
+            completion(nil)
+            return
+        }
+
+        provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
+            if let data, let date = Self.captureDate(fromImageData: data) {
+                completion(date)
+                return
+            }
+
+            let remaining = candidateTypes.filter { $0 != type }
+            if remaining.isEmpty {
+                completion(nil)
+            } else {
+                self.loadCaptureDateUsingDataRepresentation(from: provider, candidateTypes: remaining, completion: completion)
             }
         }
     }
