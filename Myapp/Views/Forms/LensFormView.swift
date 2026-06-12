@@ -100,6 +100,8 @@ struct LensFormView: View {
     private struct EditableSourceImage: Identifiable {
         let id = UUID()
         let image: UIImage
+        let wasAutoDetected: Bool
+        let initialFocusRect: CGRect?
     }
 
     private enum FormStep: Int, CaseIterable, Identifiable {
@@ -391,7 +393,7 @@ struct LensFormView: View {
         .sheet(isPresented: $showingCamera, onDismiss: {
             guard let image = pendingCapturedImage else { return }
             pendingCapturedImage = nil
-            stickerEditingSourceImage = EditableSourceImage(image: image)
+            prepareEditableSourceImage(from: image)
         }) {
             EyeGuideCameraCaptureView(
                 onCapture: { image in
@@ -404,6 +406,8 @@ struct LensFormView: View {
         .sheet(item: $stickerEditingSourceImage) { source in
             EyeEllipseEditorView(
                 sourceImage: source.image,
+                wasAutoDetected: source.wasAutoDetected,
+                initialFocusRect: source.initialFocusRect,
                 onCancel: {
                     stickerEditingSourceImage = nil
                 },
@@ -883,12 +887,12 @@ struct LensFormView: View {
                 preparingStickerImage = true
             }
 
-            let image = await loadSourceImage(from: next)
+            let editableSource = await loadEditableSourceImage(from: next)
 
             await MainActor.run {
                 preparingStickerImage = false
-                if let image {
-                    stickerEditingSourceImage = EditableSourceImage(image: image)
+                if let editableSource {
+                    stickerEditingSourceImage = editableSource
                 }
             }
         }
@@ -1203,12 +1207,49 @@ struct LensFormView: View {
         recentPurchasePlacesRaw = items.prefix(30).joined(separator: "\n")
     }
 
-    private func loadSourceImage(from item: PhotosPickerItem?) async -> UIImage? {
+    private func prepareEditableSourceImage(from image: UIImage) {
+        Task {
+            await MainActor.run {
+                preparingStickerImage = true
+            }
+
+            let editableSource = await makeEditableSourceImage(from: image, originalData: image.jpegData(compressionQuality: 0.95))
+
+            await MainActor.run {
+                preparingStickerImage = false
+                if let editableSource {
+                    stickerEditingSourceImage = editableSource
+                }
+            }
+        }
+    }
+
+    private func loadEditableSourceImage(from item: PhotosPickerItem?) async -> EditableSourceImage? {
         guard let item else { return nil }
         guard let data = try? await item.loadTransferable(type: Data.self) else { return nil }
         let image = downsampledImage(from: data, maxPixel: 2200) ?? UIImage(data: data)
         guard let image else { return nil }
-        return normalizedImage(from: image) ?? image
+        return await makeEditableSourceImage(from: image, originalData: data)
+    }
+
+    private func makeEditableSourceImage(from image: UIImage, originalData: Data?) async -> EditableSourceImage? {
+        let normalized = normalizedImage(from: image) ?? image
+        let detectionData = normalized.jpegData(compressionQuality: 0.95) ?? originalData
+
+        if let detectionData,
+           let focusRect = await EyeCropper.detectMostProminentEyeRect(from: detectionData) {
+            return EditableSourceImage(
+                image: normalized,
+                wasAutoDetected: true,
+                initialFocusRect: focusRect
+            )
+        }
+
+        return EditableSourceImage(
+            image: normalized,
+            wasAutoDetected: false,
+            initialFocusRect: nil
+        )
     }
 
     private func downsampledImage(from data: Data, maxPixel: CGFloat) -> UIImage? {
@@ -1276,6 +1317,8 @@ private struct EyeStickerPreview: View {
 
 private struct EyeEllipseEditorView: View {
     let sourceImage: UIImage
+    let wasAutoDetected: Bool
+    let initialFocusRect: CGRect?
     let onCancel: () -> Void
     let onSave: (Data?) -> Void
 
@@ -1286,13 +1329,26 @@ private struct EyeEllipseEditorView: View {
     @State private var rotation: Angle = .zero
     @State private var lastRotation: Angle = .zero
     @State private var viewportSize: CGSize = CGSize(width: 340, height: 220)
+    @State private var didApplyAutoFocus = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
+                if wasAutoDetected {
+                    Label("目の位置を自動で検出しました。必要なら微調整してください。", systemImage: "sparkles")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
+                }
+
                 GeometryReader { geo in
                     let viewWidth = min(geo.size.width - 24, 380)
                     let viewHeight = viewWidth * 0.62
+                    let baseRect = aspectFillRect(
+                        contentSize: sourceImage.size,
+                        boundsSize: CGSize(width: viewWidth, height: viewHeight)
+                    )
 
                     ZStack {
                         Color.black.opacity(0.85).ignoresSafeArea()
@@ -1301,7 +1357,7 @@ private struct EyeEllipseEditorView: View {
                             Image(uiImage: sourceImage)
                                 .resizable()
                                 .scaledToFill()
-                                .frame(width: viewWidth * scale, height: viewHeight * scale)
+                                .frame(width: baseRect.width * scale, height: baseRect.height * scale)
                                 .rotationEffect(rotation)
                                 .offset(offset)
                                 .contentShape(Rectangle())
@@ -1318,11 +1374,11 @@ private struct EyeEllipseEditorView: View {
                         .clipped()
                         .onAppear {
                             viewportSize = CGSize(width: viewWidth, height: viewHeight)
-                            clamp(in: viewportSize)
+                            applyAutoFocusIfNeeded(in: viewportSize)
                         }
                         .onChange(of: viewWidth) { _, _ in
                             viewportSize = CGSize(width: viewWidth, height: viewHeight)
-                            clamp(in: viewportSize)
+                            applyAutoFocusIfNeeded(in: viewportSize)
                         }
                     }
                 }
@@ -1391,6 +1447,44 @@ private struct EyeEllipseEditorView: View {
         let maxY = max(0, (base.height * scale - cropSize.height) * 0.5)
         offset.width = min(max(offset.width, -maxX), maxX)
         offset.height = min(max(offset.height, -maxY), maxY)
+    }
+
+    private func applyAutoFocusIfNeeded(in cropSize: CGSize) {
+        guard cropSize.width > 0, cropSize.height > 0 else { return }
+        guard didApplyAutoFocus == false else {
+            clamp(in: cropSize)
+            return
+        }
+
+        guard let initialFocusRect else {
+            clamp(in: cropSize)
+            return
+        }
+
+        let base = aspectFillRect(contentSize: sourceImage.size, boundsSize: cropSize)
+        let widthRatio = initialFocusRect.width / max(sourceImage.size.width, 1)
+        let heightRatio = initialFocusRect.height / max(sourceImage.size.height, 1)
+        let focusWidth = base.width * widthRatio
+        let focusHeight = base.height * heightRatio
+
+        let targetWidth = cropSize.width * 0.72
+        let targetHeight = cropSize.height * 0.72
+        let computedScale = min(max(min(targetWidth / max(focusWidth, 1), targetHeight / max(focusHeight, 1)), 1), 6)
+        scale = computedScale
+        lastScale = computedScale
+
+        let focusCenter = CGPoint(
+            x: base.minX + base.width * (initialFocusRect.midX / max(sourceImage.size.width, 1)),
+            y: base.minY + base.height * (initialFocusRect.midY / max(sourceImage.size.height, 1))
+        )
+        let viewportCenter = CGPoint(x: cropSize.width * 0.5, y: cropSize.height * 0.5)
+        offset = CGSize(
+            width: -(focusCenter.x - viewportCenter.x) * computedScale,
+            height: -(focusCenter.y - viewportCenter.y) * computedScale
+        )
+        clamp(in: cropSize)
+        lastOffset = offset
+        didApplyAutoFocus = true
     }
 
     private func renderMaskedImageData() -> Data? {
